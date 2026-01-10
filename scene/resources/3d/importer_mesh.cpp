@@ -100,6 +100,9 @@ void ImporterMesh::add_surface(Mesh::PrimitiveType p_primitive, const Array &p_a
 
 	surfaces.push_back(s);
 	mesh.unref();
+#ifndef _3D_DISABLED
+	meshlet_mesh.unref();
+#endif
 }
 
 int ImporterMesh::get_surface_count() const {
@@ -122,6 +125,9 @@ void ImporterMesh::set_surface_name(int p_surface, const String &p_name) {
 	ERR_FAIL_INDEX(p_surface, surfaces.size());
 	surfaces.write[p_surface].name = p_name;
 	mesh.unref();
+#ifndef _3D_DISABLED
+	meshlet_mesh.unref();
+#endif
 }
 
 Array ImporterMesh::get_surface_blend_shape_arrays(int p_surface, int p_blend_shape) const {
@@ -160,6 +166,9 @@ void ImporterMesh::set_surface_material(int p_surface, const Ref<Material> &p_ma
 	ERR_FAIL_INDEX(p_surface, surfaces.size());
 	surfaces.write[p_surface].material = p_material;
 	mesh.unref();
+#ifndef _3D_DISABLED
+	meshlet_mesh.unref();
+#endif
 }
 
 template <typename T>
@@ -627,6 +636,65 @@ Ref<ArrayMesh> ImporterMesh::get_mesh(const Ref<ArrayMesh> &p_base) {
 	return mesh;
 }
 
+#ifndef _3D_DISABLED
+
+bool ImporterMesh::has_meshlet_mesh() const {
+	return meshlet_mesh.is_valid();
+}
+
+Ref<MeshletMesh> ImporterMesh::get_meshlet_mesh(const Ref<MeshletMesh> &p_base) {
+	ERR_FAIL_COND_V(surfaces.is_empty(), Ref<ArrayMesh>());
+
+	if (meshlet_mesh.is_null()) {
+		if (p_base.is_valid()) {
+			meshlet_mesh = p_base;
+		}
+		if (meshlet_mesh.is_null()) {
+			meshlet_mesh.instantiate();
+		}
+		meshlet_mesh->set_name(get_name());
+		if (has_meta("import_id")) {
+			meshlet_mesh->set_meta("import_id", get_meta("import_id"));
+		}
+
+		for (int i = 0; i < surfaces.size(); i++) {
+			Vector<Vector3> vertices = surfaces[i].arrays[RS::ARRAY_VERTEX];
+			PackedInt32Array indices = surfaces[i].arrays[RS::ARRAY_INDEX];
+			Vector<Vector3> normals = surfaces[i].arrays[RS::ARRAY_NORMAL];
+			Vector<Vector2> uvs = surfaces[i].arrays[RS::ARRAY_TEX_UV];
+
+			unsigned int index_count = indices.size();
+			unsigned int vertex_count = vertices.size();
+
+			if (index_count == 0) {
+				continue;
+			}
+
+			normals.resize(vertex_count);
+			uvs.resize(vertex_count);
+
+			// FIXME: actually create meshlet mesh here, call SurfaceTool function with relevant data and store resulting meshlets and data slices.
+
+			// FIXME: then store the result in the meshlet_mesh
+			meshlet_mesh->add_surface_from_arrays(surfaces[i].primitive, surfaces[i].arrays, bs_data, lods, surfaces[i].flags);
+			if (surfaces[i].material.is_valid()) {
+				meshlet_mesh->surface_set_material(meshlet_mesh->get_surface_count() - 1, surfaces[i].material);
+			}
+			if (!surfaces[i].name.is_empty()) {
+				meshlet_mesh->surface_set_name(meshlet_mesh->get_surface_count() - 1, surfaces[i].name);
+			}
+		}
+
+		//if (shadow_mesh.is_valid()) {
+		//	Ref<ArrayMesh> shadow = shadow_mesh->get_mesh();
+		//	meshlet_mesh->set_shadow_mesh(shadow);
+		//}
+	}
+
+	return meshlet_mesh;
+}
+#endif
+
 Ref<ImporterMesh> ImporterMesh::from_mesh(const Ref<Mesh> &p_mesh) {
 	Ref<ImporterMesh> importer_mesh;
 	importer_mesh.instantiate();
@@ -669,6 +737,9 @@ void ImporterMesh::clear() {
 	surfaces.clear();
 	blend_shapes.clear();
 	mesh.unref();
+#ifndef _3D_DISABLED
+	meshlet_mesh.unref();
+#endif
 }
 
 void ImporterMesh::create_shadow_mesh() {

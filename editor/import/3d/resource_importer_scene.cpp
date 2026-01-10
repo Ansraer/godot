@@ -2170,6 +2170,7 @@ void ResourceImporterScene::get_internal_import_options(InternalImportCategory p
 			r_options->push_back(ImportOption(PropertyInfo(Variant::FLOAT, "occluder/simplification_distance", PROPERTY_HINT_RANGE, "0.0,2.0,0.01", PROPERTY_USAGE_DEFAULT), 0.1f));
 		} break;
 		case INTERNAL_IMPORT_CATEGORY_MESH: {
+			r_options->push_back(ImportOption(PropertyInfo(Variant::BOOL, "format/meshlet", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT), false));
 			r_options->push_back(ImportOption(PropertyInfo(Variant::BOOL, "save_to_file/enabled", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_UPDATE_ALL_IF_MODIFIED), false));
 			r_options->push_back(ImportOption(PropertyInfo(Variant::STRING, "save_to_file/path", PROPERTY_HINT_SAVE_FILE, "*.res,*.tres"), ""));
 			r_options->push_back(ImportOption(PropertyInfo(Variant::STRING, "save_to_file/fallback_path", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), ""));
@@ -2603,185 +2604,30 @@ Node *ResourceImporterScene::_generate_meshes(Node *p_node, const Dictionary &p_
 	ImporterMeshInstance3D *src_mesh_node = Object::cast_to<ImporterMeshInstance3D>(p_node);
 	if (src_mesh_node) {
 		//is mesh
-		MeshInstance3D *mesh_node = memnew(MeshInstance3D);
-		mesh_node->set_name(src_mesh_node->get_name());
-		mesh_node->set_transform(src_mesh_node->get_transform());
-		mesh_node->set_skin(src_mesh_node->get_skin());
-		mesh_node->set_skeleton_path(src_mesh_node->get_skeleton_path());
-		mesh_node->merge_meta_from(src_mesh_node);
 
+		bool use_meshlets = false;
+#ifndef _3D_DISABLED
+
+		// load enough of the settings to figure out whether we want to import this mesh as a meshlet mesh
 		Ref<ImporterMesh> importer_mesh = src_mesh_node->get_mesh();
 		if (importer_mesh.is_valid()) {
-			Ref<ArrayMesh> mesh;
-			if (!importer_mesh->has_mesh()) {
-				//do mesh processing
+			String mesh_id = importer_mesh->get_meta("import_id", importer_mesh->get_name());
+			if (!mesh_id.is_empty() && p_mesh_data.has(mesh_id)) {
+				Dictionary mesh_settings = p_mesh_data[mesh_id];
 
-				bool generate_lods = p_generate_lods;
-				float merge_angle = 20.0f;
-				bool create_shadow_meshes = p_create_shadow_meshes;
-				bool bake_lightmaps = p_light_bake_mode == LIGHT_BAKE_STATIC_LIGHTMAPS;
-				String save_to_file;
-
-				String mesh_id = importer_mesh->get_meta("import_id", importer_mesh->get_name());
-
-				if (!mesh_id.is_empty() && p_mesh_data.has(mesh_id)) {
-					Dictionary mesh_settings = p_mesh_data[mesh_id];
-					{
-						//fill node settings for this node with default values
-						List<ImportOption> iopts;
-						get_internal_import_options(INTERNAL_IMPORT_CATEGORY_MESH, &iopts);
-						for (const ImportOption &E : iopts) {
-							if (!mesh_settings.has(E.option.name)) {
-								mesh_settings[E.option.name] = E.default_value;
-							}
-						}
-					}
-
-					if (mesh_settings.has("generate/shadow_meshes")) {
-						int shadow_meshes = mesh_settings["generate/shadow_meshes"];
-						if (shadow_meshes == MESH_OVERRIDE_ENABLE) {
-							create_shadow_meshes = true;
-						} else if (shadow_meshes == MESH_OVERRIDE_DISABLE) {
-							create_shadow_meshes = false;
-						}
-					}
-
-					if (mesh_settings.has("generate/lightmap_uv")) {
-						int lightmap_uv = mesh_settings["generate/lightmap_uv"];
-						if (lightmap_uv == MESH_OVERRIDE_ENABLE) {
-							bake_lightmaps = true;
-						} else if (lightmap_uv == MESH_OVERRIDE_DISABLE) {
-							bake_lightmaps = false;
-						}
-					}
-
-					if (mesh_settings.has("generate/lods")) {
-						int lods = mesh_settings["generate/lods"];
-						if (lods == MESH_OVERRIDE_ENABLE) {
-							generate_lods = true;
-						} else if (lods == MESH_OVERRIDE_DISABLE) {
-							generate_lods = false;
-						}
-					}
-
-					if (mesh_settings.has("lods/normal_merge_angle")) {
-						merge_angle = mesh_settings["lods/normal_merge_angle"];
-					}
-
-					if (bool(mesh_settings.get("save_to_file/enabled", false))) {
-						save_to_file = mesh_settings.get("save_to_file/path", String());
-						if (!ResourceUID::ensure_path(save_to_file).is_resource_file()) {
-							save_to_file = "";
-						}
-					}
-
-					for (int i = 0; i < post_importer_plugins.size(); i++) {
-						post_importer_plugins.write[i]->internal_process(EditorScenePostImportPlugin::INTERNAL_IMPORT_CATEGORY_MESH, nullptr, src_mesh_node, importer_mesh, mesh_settings);
-					}
-				}
-
-				if (bake_lightmaps) {
-					Transform3D xf;
-					Node3D *n = src_mesh_node;
-					while (n) {
-						xf = n->get_transform() * xf;
-						n = n->get_parent_node_3d();
-					}
-
-					Vector<uint8_t> lightmap_cache;
-					importer_mesh->lightmap_unwrap_cached(xf, p_lightmap_texel_size, p_src_lightmap_cache, lightmap_cache);
-
-					if (!lightmap_cache.is_empty()) {
-						if (r_lightmap_caches.is_empty()) {
-							r_lightmap_caches.push_back(lightmap_cache);
-						} else {
-							String new_md5 = String::md5(lightmap_cache.ptr()); // MD5 is stored at the beginning of the cache data
-
-							for (int i = 0; i < r_lightmap_caches.size(); i++) {
-								String md5 = String::md5(r_lightmap_caches[i].ptr());
-								if (new_md5 < md5) {
-									r_lightmap_caches.insert(i, lightmap_cache);
-									break;
-								}
-
-								if (new_md5 == md5) {
-									break;
-								}
-							}
-						}
-					}
-				}
-
-				if (generate_lods) {
-					Array skin_pose_transform_array = _get_skinned_pose_transforms(src_mesh_node);
-					importer_mesh->generate_lods(merge_angle, skin_pose_transform_array);
-				}
-
-				if (create_shadow_meshes) {
-					importer_mesh->create_shadow_mesh();
-				}
-
-				importer_mesh->optimize_indices();
-
-				if (!save_to_file.is_empty()) {
-					String save_res_path = ResourceUID::ensure_path(save_to_file);
-					Ref<Mesh> existing = ResourceCache::get_ref(save_res_path);
-					if (existing.is_valid()) {
-						//if somehow an existing one is useful, create
-						existing->reset_state();
-					}
-					mesh = importer_mesh->get_mesh(existing);
-
-					Error err = ResourceSaver::save(mesh, save_res_path); //override
-					if (err != OK) {
-						WARN_PRINT(vformat("Failed to save mesh %s to '%s'.", mesh->get_name(), save_res_path));
-					}
-					if (err == OK && save_to_file.begins_with("uid://")) {
-						// slow
-						ResourceSaver::set_uid(save_res_path, ResourceUID::get_singleton()->text_to_id(save_to_file));
-					}
-
-					mesh->set_path(save_res_path, true); //takeover existing, if needed
-
-				} else {
-					mesh = importer_mesh->get_mesh();
-				}
-			} else {
-				mesh = importer_mesh->get_mesh();
-			}
-
-			if (mesh.is_valid()) {
-				_copy_meta(importer_mesh.ptr(), mesh.ptr());
-				mesh_node->set_mesh(mesh);
-				for (int i = 0; i < mesh->get_surface_count(); i++) {
-					mesh_node->set_surface_override_material(i, src_mesh_node->get_surface_material(i));
-				}
-				mesh->merge_meta_from(*importer_mesh);
+				use_meshlets = bool(mesh_settings.get("format/meshlet", false));
 			}
 		}
+#endif
 
-		switch (p_light_bake_mode) {
-			case LIGHT_BAKE_DISABLED: {
-				mesh_node->set_gi_mode(GeometryInstance3D::GI_MODE_DISABLED);
-			} break;
-			case LIGHT_BAKE_DYNAMIC: {
-				mesh_node->set_gi_mode(GeometryInstance3D::GI_MODE_DYNAMIC);
-			} break;
-			case LIGHT_BAKE_STATIC:
-			case LIGHT_BAKE_STATIC_LIGHTMAPS: {
-				mesh_node->set_gi_mode(GeometryInstance3D::GI_MODE_STATIC);
-			} break;
+		Node *mesh_node = nullptr;
+		if (use_meshlets) {
+#ifndef _3D_DISABLED
+
+#endif
+		} else {
+			mesh_node = _generate_mesh_instance(src_mesh_node, p_mesh_data, p_generate_lods, p_create_shadow_meshes, p_light_bake_mode, p_lightmap_texel_size, p_src_lightmap_cache, r_lightmap_caches);
 		}
-
-		mesh_node->set_layer_mask(src_mesh_node->get_layer_mask());
-		mesh_node->set_cast_shadows_setting(src_mesh_node->get_cast_shadows_setting());
-		mesh_node->set_visible(src_mesh_node->is_visible());
-		mesh_node->set_visibility_range_begin(src_mesh_node->get_visibility_range_begin());
-		mesh_node->set_visibility_range_begin_margin(src_mesh_node->get_visibility_range_begin_margin());
-		mesh_node->set_visibility_range_end(src_mesh_node->get_visibility_range_end());
-		mesh_node->set_visibility_range_end_margin(src_mesh_node->get_visibility_range_end_margin());
-		mesh_node->set_visibility_range_fade_mode(src_mesh_node->get_visibility_range_fade_mode());
-
 		_copy_meta(p_node, mesh_node);
 
 		p_node->replace_by(mesh_node);
@@ -2796,6 +2642,361 @@ Node *ResourceImporterScene::_generate_meshes(Node *p_node, const Dictionary &p_
 
 	return p_node;
 }
+
+Node *ResourceImporterScene::_generate_mesh_instance(ImporterMeshInstance3D *p_src_mesh_node, const Dictionary &p_mesh_data, bool p_generate_lods, bool p_create_shadow_meshes, LightBakeMode p_light_bake_mode, float p_lightmap_texel_size, const Vector<uint8_t> &p_src_lightmap_cache, Vector<Vector<uint8_t>> &r_lightmap_caches) {
+	MeshInstance3D *mesh_node = memnew(MeshInstance3D);
+	mesh_node->set_name(p_src_mesh_node->get_name());
+	mesh_node->set_transform(p_src_mesh_node->get_transform());
+	mesh_node->set_skin(p_src_mesh_node->get_skin());
+	mesh_node->set_skeleton_path(p_src_mesh_node->get_skeleton_path());
+	mesh_node->merge_meta_from(p_src_mesh_node);
+
+	Ref<ImporterMesh> importer_mesh = p_src_mesh_node->get_mesh();
+	if (importer_mesh.is_valid()) {
+		Ref<ArrayMesh> mesh;
+		if (!importer_mesh->has_mesh()) {
+			//do mesh processing
+
+			bool generate_lods = p_generate_lods;
+			float merge_angle = 20.0f;
+			bool create_shadow_meshes = p_create_shadow_meshes;
+			bool bake_lightmaps = p_light_bake_mode == LIGHT_BAKE_STATIC_LIGHTMAPS;
+			String save_to_file;
+
+			String mesh_id = importer_mesh->get_meta("import_id", importer_mesh->get_name());
+
+			if (!mesh_id.is_empty() && p_mesh_data.has(mesh_id)) {
+				Dictionary mesh_settings = p_mesh_data[mesh_id];
+				{
+					//fill node settings for this node with default values
+					List<ImportOption> iopts;
+					get_internal_import_options(INTERNAL_IMPORT_CATEGORY_MESH, &iopts);
+					for (const ImportOption &E : iopts) {
+						if (!mesh_settings.has(E.option.name)) {
+							mesh_settings[E.option.name] = E.default_value;
+						}
+					}
+				}
+
+				if (mesh_settings.has("generate/shadow_meshes")) {
+					int shadow_meshes = mesh_settings["generate/shadow_meshes"];
+					if (shadow_meshes == MESH_OVERRIDE_ENABLE) {
+						create_shadow_meshes = true;
+					} else if (shadow_meshes == MESH_OVERRIDE_DISABLE) {
+						create_shadow_meshes = false;
+					}
+				}
+
+				if (mesh_settings.has("generate/lightmap_uv")) {
+					int lightmap_uv = mesh_settings["generate/lightmap_uv"];
+					if (lightmap_uv == MESH_OVERRIDE_ENABLE) {
+						bake_lightmaps = true;
+					} else if (lightmap_uv == MESH_OVERRIDE_DISABLE) {
+						bake_lightmaps = false;
+					}
+				}
+
+				if (mesh_settings.has("generate/lods")) {
+					int lods = mesh_settings["generate/lods"];
+					if (lods == MESH_OVERRIDE_ENABLE) {
+						generate_lods = true;
+					} else if (lods == MESH_OVERRIDE_DISABLE) {
+						generate_lods = false;
+					}
+				}
+
+				if (mesh_settings.has("lods/normal_merge_angle")) {
+					merge_angle = mesh_settings["lods/normal_merge_angle"];
+				}
+
+				if (bool(mesh_settings.get("save_to_file/enabled", false))) {
+					save_to_file = mesh_settings.get("save_to_file/path", String());
+					if (!ResourceUID::ensure_path(save_to_file).is_resource_file()) {
+						save_to_file = "";
+					}
+				}
+
+				for (int i = 0; i < post_importer_plugins.size(); i++) {
+					post_importer_plugins.write[i]->internal_process(EditorScenePostImportPlugin::INTERNAL_IMPORT_CATEGORY_MESH, nullptr, p_src_mesh_node, importer_mesh, mesh_settings);
+				}
+			}
+
+			if (bake_lightmaps) {
+				Transform3D xf;
+				Node3D *n = p_src_mesh_node;
+				while (n) {
+					xf = n->get_transform() * xf;
+					n = n->get_parent_node_3d();
+				}
+
+				Vector<uint8_t> lightmap_cache;
+				importer_mesh->lightmap_unwrap_cached(xf, p_lightmap_texel_size, p_src_lightmap_cache, lightmap_cache);
+
+				if (!lightmap_cache.is_empty()) {
+					if (r_lightmap_caches.is_empty()) {
+						r_lightmap_caches.push_back(lightmap_cache);
+					} else {
+						String new_md5 = String::md5(lightmap_cache.ptr()); // MD5 is stored at the beginning of the cache data
+
+						for (int i = 0; i < r_lightmap_caches.size(); i++) {
+							String md5 = String::md5(r_lightmap_caches[i].ptr());
+							if (new_md5 < md5) {
+								r_lightmap_caches.insert(i, lightmap_cache);
+								break;
+							}
+
+							if (new_md5 == md5) {
+								break;
+							}
+						}
+					}
+				}
+			}
+
+			if (generate_lods) {
+				Array skin_pose_transform_array = _get_skinned_pose_transforms(p_src_mesh_node);
+				importer_mesh->generate_lods(merge_angle, skin_pose_transform_array);
+			}
+
+			if (create_shadow_meshes) {
+				importer_mesh->create_shadow_mesh();
+			}
+
+			importer_mesh->optimize_indices();
+
+			if (!save_to_file.is_empty()) {
+				String save_res_path = ResourceUID::ensure_path(save_to_file);
+				Ref<Mesh> existing = ResourceCache::get_ref(save_res_path);
+				if (existing.is_valid()) {
+					//if somehow an existing one is useful, create
+					existing->reset_state();
+				}
+				mesh = importer_mesh->get_mesh(existing);
+
+				Error err = ResourceSaver::save(mesh, save_res_path); //override
+				if (err != OK) {
+					WARN_PRINT(vformat("Failed to save mesh %s to '%s'.", mesh->get_name(), save_res_path));
+				}
+				if (err == OK && save_to_file.begins_with("uid://")) {
+					// slow
+					ResourceSaver::set_uid(save_res_path, ResourceUID::get_singleton()->text_to_id(save_to_file));
+				}
+
+				mesh->set_path(save_res_path, true); //takeover existing, if needed
+
+			} else {
+				mesh = importer_mesh->get_mesh();
+			}
+		} else {
+			mesh = importer_mesh->get_mesh();
+		}
+
+		if (mesh.is_valid()) {
+			_copy_meta(importer_mesh.ptr(), mesh.ptr());
+			mesh_node->set_mesh(mesh);
+			for (int i = 0; i < mesh->get_surface_count(); i++) {
+				mesh_node->set_surface_override_material(i, p_src_mesh_node->get_surface_material(i));
+			}
+			mesh->merge_meta_from(*importer_mesh);
+		}
+	}
+
+	switch (p_light_bake_mode) {
+		case LIGHT_BAKE_DISABLED: {
+			mesh_node->set_gi_mode(GeometryInstance3D::GI_MODE_DISABLED);
+		} break;
+		case LIGHT_BAKE_DYNAMIC: {
+			mesh_node->set_gi_mode(GeometryInstance3D::GI_MODE_DYNAMIC);
+		} break;
+		case LIGHT_BAKE_STATIC:
+		case LIGHT_BAKE_STATIC_LIGHTMAPS: {
+			mesh_node->set_gi_mode(GeometryInstance3D::GI_MODE_STATIC);
+		} break;
+	}
+
+	mesh_node->set_layer_mask(p_src_mesh_node->get_layer_mask());
+	mesh_node->set_cast_shadows_setting(p_src_mesh_node->get_cast_shadows_setting());
+	mesh_node->set_visible(p_src_mesh_node->is_visible());
+	mesh_node->set_visibility_range_begin(p_src_mesh_node->get_visibility_range_begin());
+	mesh_node->set_visibility_range_begin_margin(p_src_mesh_node->get_visibility_range_begin_margin());
+	mesh_node->set_visibility_range_end(p_src_mesh_node->get_visibility_range_end());
+	mesh_node->set_visibility_range_end_margin(p_src_mesh_node->get_visibility_range_end_margin());
+	mesh_node->set_visibility_range_fade_mode(p_src_mesh_node->get_visibility_range_fade_mode());
+
+	return mesh_node;
+}
+
+#ifndef _3D_DISABLED
+Node *ResourceImporterScene::_generate_meshlet_mesh_instance(ImporterMeshInstance3D *p_src_mesh_node, const Dictionary &p_mesh_data, bool p_generate_lods, bool p_create_shadow_meshes, LightBakeMode p_light_bake_mode, float p_lightmap_texel_size, const Vector<uint8_t> &p_src_lightmap_cache, Vector<Vector<uint8_t>> &r_lightmap_caches) {
+	// FIXME: replace me with a meshlet_mesh_node
+	MeshInstance3D *mesh_node = memnew(MeshInstance3D);
+	mesh_node->set_name(p_src_mesh_node->get_name());
+	mesh_node->set_transform(p_src_mesh_node->get_transform());
+	mesh_node->set_skin(p_src_mesh_node->get_skin());
+	mesh_node->set_skeleton_path(p_src_mesh_node->get_skeleton_path());
+	mesh_node->merge_meta_from(p_src_mesh_node);
+
+	Ref<ImporterMesh> importer_mesh = p_src_mesh_node->get_mesh();
+
+	if (importer_mesh.is_valid()) {
+		Ref<MeshletMesh> mesh;
+		if (!importer_mesh->has_meshlet_mesh()) {
+			//do mesh processing
+
+			bool create_shadow_meshes = p_create_shadow_meshes;
+			bool bake_lightmaps = p_light_bake_mode == LIGHT_BAKE_STATIC_LIGHTMAPS;
+			String save_to_file;
+
+			String mesh_id = importer_mesh->get_meta("import_id", importer_mesh->get_name());
+
+			if (!mesh_id.is_empty() && p_mesh_data.has(mesh_id)) {
+				Dictionary mesh_settings = p_mesh_data[mesh_id];
+				{
+					//fill node settings for this node with default values
+					List<ImportOption> iopts;
+					get_internal_import_options(INTERNAL_IMPORT_CATEGORY_MESH, &iopts);
+					for (const ImportOption &E : iopts) {
+						if (!mesh_settings.has(E.option.name)) {
+							mesh_settings[E.option.name] = E.default_value;
+						}
+					}
+				}
+
+				if (mesh_settings.has("generate/shadow_meshes")) {
+					int shadow_meshes = mesh_settings["generate/shadow_meshes"];
+					if (shadow_meshes == MESH_OVERRIDE_ENABLE) {
+						create_shadow_meshes = true;
+					} else if (shadow_meshes == MESH_OVERRIDE_DISABLE) {
+						create_shadow_meshes = false;
+					}
+				}
+
+				if (mesh_settings.has("generate/lightmap_uv")) {
+					int lightmap_uv = mesh_settings["generate/lightmap_uv"];
+					if (lightmap_uv == MESH_OVERRIDE_ENABLE) {
+						bake_lightmaps = true;
+					} else if (lightmap_uv == MESH_OVERRIDE_DISABLE) {
+						bake_lightmaps = false;
+					}
+				}
+
+				if (bool(mesh_settings.get("save_to_file/enabled", false))) {
+					save_to_file = mesh_settings.get("save_to_file/path", String());
+					if (!ResourceUID::ensure_path(save_to_file).is_resource_file()) {
+						save_to_file = "";
+					}
+				}
+
+				//for (int i = 0; i < post_importer_plugins.size(); i++) {
+				//	post_importer_plugins.write[i]->internal_process(EditorScenePostImportPlugin::INTERNAL_IMPORT_CATEGORY_MESH, nullptr, p_src_mesh_node, importer_mesh, mesh_settings);
+				//}
+			}
+
+			// TODO: do any additional processing here. The actual meshlet mesh is
+			// generated the first time get_meshlet_mesh() is called when none exists.
+
+			//if (bake_lightmaps) {
+			//	Transform3D xf;
+			//	Node3D *n = p_src_mesh_node;
+			//	while (n) {
+			//		xf = n->get_transform() * xf;
+			//		n = n->get_parent_node_3d();
+			//	}
+			//
+			//	Vector<uint8_t> lightmap_cache;
+			//	importer_mesh->lightmap_unwrap_cached(xf, p_lightmap_texel_size, p_src_lightmap_cache, lightmap_cache);
+			//
+			//	if (!lightmap_cache.is_empty()) {
+			//		if (r_lightmap_caches.is_empty()) {
+			//			r_lightmap_caches.push_back(lightmap_cache);
+			//		} else {
+			//			String new_md5 = String::md5(lightmap_cache.ptr()); // MD5 is stored at the beginning of the cache data
+			//
+			//			for (int i = 0; i < r_lightmap_caches.size(); i++) {
+			//				String md5 = String::md5(r_lightmap_caches[i].ptr());
+			//				if (new_md5 < md5) {
+			//					r_lightmap_caches.insert(i, lightmap_cache);
+			//					break;
+			//				}
+			//
+			//				if (new_md5 == md5) {
+			//					break;
+			//				}
+			//			}
+			//		}
+			//	}
+			//}
+
+			//if (create_shadow_meshes) {
+			//	importer_mesh->create_shadow_mesh();
+			//}
+
+			//importer_mesh->optimize_indices();
+
+			// TODO: create siplified collision mesh here so that  can use it
+
+			if (!save_to_file.is_empty()) {
+				// Check if this mesh already exists, if so reset it and overwrite it
+				String save_res_path = ResourceUID::ensure_path(save_to_file);
+				Ref<MeshletMesh> existing = ResourceCache::get_ref(save_res_path);
+				if (existing.is_valid()) {
+					existing->reset_state();
+				}
+				mesh = importer_mesh->get_meshlet_mesh(existing);
+
+				Error err = ResourceSaver::save(mesh, save_res_path); //override
+				if (err != OK) {
+					WARN_PRINT(vformat("Failed to save meshlet mesh %s to '%s'.", mesh->get_name(), save_res_path));
+				}
+				if (err == OK && save_to_file.begins_with("uid://")) {
+					// slow
+					ResourceSaver::set_uid(save_res_path, ResourceUID::get_singleton()->text_to_id(save_to_file));
+				}
+
+				mesh->set_path(save_res_path, true); //takeover existing, if needed
+
+			} else {
+				mesh = importer_mesh->get_meshlet_mesh();
+			}
+		} else {
+			mesh = importer_mesh->get_meshlet_mesh();
+		}
+
+		if (mesh.is_valid()) {
+			_copy_meta(importer_mesh.ptr(), mesh.ptr());
+			mesh_node->set_mesh(mesh);
+			for (int i = 0; i < mesh->get_surface_count(); i++) {
+				mesh_node->set_surface_override_material(i, p_src_mesh_node->get_surface_material(i));
+			}
+			mesh->merge_meta_from(*importer_mesh);
+		}
+	}
+
+	switch (p_light_bake_mode) {
+		case LIGHT_BAKE_DISABLED: {
+			mesh_node->set_gi_mode(GeometryInstance3D::GI_MODE_DISABLED);
+		} break;
+		case LIGHT_BAKE_DYNAMIC: {
+			mesh_node->set_gi_mode(GeometryInstance3D::GI_MODE_DYNAMIC);
+		} break;
+		case LIGHT_BAKE_STATIC:
+		case LIGHT_BAKE_STATIC_LIGHTMAPS: {
+			mesh_node->set_gi_mode(GeometryInstance3D::GI_MODE_STATIC);
+		} break;
+	}
+
+	mesh_node->set_layer_mask(p_src_mesh_node->get_layer_mask());
+	mesh_node->set_cast_shadows_setting(p_src_mesh_node->get_cast_shadows_setting());
+	mesh_node->set_visible(p_src_mesh_node->is_visible());
+	mesh_node->set_visibility_range_begin(p_src_mesh_node->get_visibility_range_begin());
+	mesh_node->set_visibility_range_begin_margin(p_src_mesh_node->get_visibility_range_begin_margin());
+	mesh_node->set_visibility_range_end(p_src_mesh_node->get_visibility_range_end());
+	mesh_node->set_visibility_range_end_margin(p_src_mesh_node->get_visibility_range_end_margin());
+	mesh_node->set_visibility_range_fade_mode(p_src_mesh_node->get_visibility_range_fade_mode());
+
+	return mesh_node;
+}
+#endif
 
 void ResourceImporterScene::_add_shapes(Node *p_node, const Vector<Ref<Shape3D>> &p_shapes) {
 	for (const Ref<Shape3D> &E : p_shapes) {

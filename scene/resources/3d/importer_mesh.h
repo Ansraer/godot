@@ -34,6 +34,10 @@
 #include "scene/resources/mesh.h"
 #include "scene/resources/navigation_mesh.h"
 
+#ifndef _3D_DISABLED
+#include "scene/resources/3d/meshlet_mesh.h"
+#endif
+
 #ifndef PHYSICS_3D_DISABLED
 #include "scene/resources/3d/concave_polygon_shape_3d.h"
 #include "scene/resources/3d/convex_polygon_shape_3d.h"
@@ -73,6 +77,9 @@ class ImporterMesh : public Resource {
 	Mesh::BlendShapeMode blend_shape_mode = Mesh::BLEND_SHAPE_MODE_NORMALIZED;
 
 	Ref<ArrayMesh> mesh;
+#ifndef _3D_DISABLED
+	Ref<MeshletMesh> meshlet_mesh;
+#endif
 
 	Ref<ImporterMesh> shadow_mesh;
 
@@ -133,6 +140,11 @@ public:
 
 	bool has_mesh() const;
 	Ref<ArrayMesh> get_mesh(const Ref<ArrayMesh> &p_base = Ref<ArrayMesh>());
+#ifndef _3D_DISABLED
+	bool has_meshlet_mesh() const;
+	Ref<MeshletMesh> get_meshlet_mesh(const Ref<MeshletMesh> &p_base = Ref<MeshletMesh>());
+#endif
+
 	static Ref<ImporterMesh> from_mesh(const Ref<Mesh> &p_mesh);
 	void clear();
 };

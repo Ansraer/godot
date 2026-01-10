@@ -113,6 +113,8 @@ public:
 	static RemapIndexFunc remap_index_func;
 	static void strip_mesh_arrays(PackedVector3Array &r_vertices, PackedInt32Array &r_indices);
 
+	static void build_meshlets();
+
 private:
 	struct VertexHasher {
 		static _FORCE_INLINE_ uint32_t hash(const Vertex &p_vtx);

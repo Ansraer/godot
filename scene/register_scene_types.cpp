@@ -271,6 +271,7 @@
 #include "scene/resources/3d/joint_limitation_3d.h"
 #include "scene/resources/3d/joint_limitation_cone_3d.h"
 #include "scene/resources/3d/mesh_library.h"
+#include "scene/resources/3d/meshlet_mesh.h"
 #include "scene/resources/3d/navigation_mesh_source_geometry_data_3d.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/sky_material.h"
@@ -985,6 +986,7 @@ void register_scene_types() {
 	GDREGISTER_CLASS(PlaceholderMesh);
 	GDREGISTER_CLASS(ImmediateMesh);
 	GDREGISTER_CLASS(MultiMesh);
+	GDREGISTER_CLASS(MeshletMesh);
 	GDREGISTER_CLASS(SurfaceTool);
 	GDREGISTER_CLASS(MeshDataTool);
 
