@@ -1867,6 +1867,8 @@ void fragment() {)";
 )";
 			}
 			code += R"(
+				//FIXME: adding an ifdef here crashes since the tokenizer doesn't know how to parse #ifdef
+				// New plan: patch "discard" directly in the tokenizer
 		// Use interleaved gradient noise, which is fast but still looks good.
 		const vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
 		float fade = clamp(smoothstep(distance_fade_min, distance_fade_max, fade_distance), 0.0, 1.0);

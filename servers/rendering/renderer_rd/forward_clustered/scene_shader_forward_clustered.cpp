@@ -315,6 +315,10 @@ uint16_t SceneShaderForwardClustered::ShaderData::_get_shader_version(PipelineVe
 				shader_flags |= SHADER_COLOR_PASS_FLAG_MULTIVIEW;
 			}
 
+			if (p_color_pass_flags & PIPELINE_COLOR_PASS_FLAG_SKIP_DISCARD) {
+				shader_flags |= SHADER_COLOR_PASS_FLAG_SKIP_DISCARD;
+			}
+
 			return ShaderVersion::SHADER_VERSION_COLOR_PASS * 2 + shader_flags;
 		} break;
 		default: {
@@ -658,6 +662,8 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 			"\n#define USE_LIGHTMAP\n", // SHADER_COLOR_PASS_FLAG_LIGHTMAP
 			"\n#define USE_MULTIVIEW\n", // SHADER_COLOR_PASS_FLAG_MULTIVIEW
 			"\n#define MOTION_VECTORS\n", // SHADER_COLOR_PASS_FLAG_MOTION_VECTORS
+			// for opaque materials with a prepass we already discarded earlier, so we can skip it during the color pass
+			"\n#define SKIP_DISCARD\n" // SHADER_COLOR_PASS_FLAG_SKIP_DISCARD
 		};
 
 		for (int i = 0; i < SHADER_COLOR_PASS_FLAG_COUNT; i++) {

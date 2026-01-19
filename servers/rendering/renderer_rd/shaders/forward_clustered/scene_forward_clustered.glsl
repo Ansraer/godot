@@ -860,6 +860,13 @@ void main() {
 
 #VERSION_DEFINES
 
+#if defined(SKIP_DISCARD)
+layout(early_fragment_tests) in;
+// discard was already handled by the depth prepass
+// turn discard into a no-op during opaque color pass
+#define discard
+#endif
+
 #define SHADER_IS_SRGB false
 #define SHADER_SPACE_FAR 0.0
 
@@ -1377,7 +1384,7 @@ void fragment_shader(in SceneData scene_data) {
 	} else {
 		alpha = 1.0;
 	}
-#else
+#elif !defined(SKIP_DISCARD)
 	if (alpha < alpha_scissor_threshold) {
 		discard;
 	}
@@ -1393,7 +1400,7 @@ void fragment_shader(in SceneData scene_data) {
 	} else {
 		alpha = 1.0;
 	}
-#else
+#elif !defined(SKIP_DISCARD)
 	if (alpha < compute_alpha_hash_threshold(object_pos, alpha_hash_scale)) {
 		discard;
 	}
@@ -1462,7 +1469,7 @@ void fragment_shader(in SceneData scene_data) {
 		albedo.a = 1.0;
 		alpha = 1.0;
 	}
-#else
+#elif !defined(SKIP_DISCARD)
 	if (albedo.a < 0.99) {
 		//used for doublepass and shadowmapping
 		discard;
@@ -2766,7 +2773,7 @@ void fragment_shader(in SceneData scene_data) {
 	} else {
 		alpha = 1.0;
 	}
-#else
+#elif !defined(SKIP_DISCARD)
 	if (alpha < alpha_scissor_threshold) {
 		discard;
 	}
