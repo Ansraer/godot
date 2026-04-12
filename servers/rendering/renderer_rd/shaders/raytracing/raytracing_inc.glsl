@@ -21,7 +21,7 @@
 #define RT_PARAM_FRAME_INDEX 15 // rt_params[3].w - Frame counter for temporal variation
 
 // ============================================================================
-// PATHTRACING PAYLOAD (32 bytes)
+// PATHTRACING PAYLOAD (56 bytes)
 // ============================================================================
 // All shader stages must use identical struct layout for payload communication.
 struct PathPayload {
@@ -29,6 +29,9 @@ struct PathPayload {
 	uint packed_bounces_flags; // 4 bytes  - Packed: [flags:8][unused:8][diffuse_bounces:8][total_bounces:8]
 	vec3 throughput; // 12 bytes - Path throughput
 	uint rng_state; // 4 bytes  - RNG state for PCG
+	// TODO: we could compress the next_ray data
+	vec3 next_ray_origin; // 12 bytes - Origin for next bounce (set by closest_hit)
+	vec3 next_ray_dir; // 12 bytes - Direction for next bounce (set by closest_hit)
 };
 
 // Bounce count helpers (bits 0-7: total, bits 8-15: diffuse)
@@ -57,13 +60,16 @@ bool is_sample_zero(uint packed) {
 	return (packed & SAMPLE_ZERO_FLAG) != 0u;
 }
 
-// Shadow ray flag (bit 25) - indicates this ray is a shadow/occlusion test
-const uint SHADOW_RAY_FLAG = (1u << 25);
-uint set_shadow_ray(uint packed) {
-	return packed | SHADOW_RAY_FLAG;
+// Continue bouncing flag (bit 25) - set by closest_hit when a next bounce is needed
+const uint CONTINUE_RAY_FLAG = (1u << 25);
+uint set_continue_ray(uint packed) {
+	return packed | CONTINUE_RAY_FLAG;
 }
-bool is_shadow_ray(uint packed) {
-	return (packed & SHADOW_RAY_FLAG) != 0u;
+bool should_continue_ray(uint packed) {
+	return (packed & CONTINUE_RAY_FLAG) != 0u;
+}
+uint clear_continue_ray(uint packed) {
+	return packed & ~CONTINUE_RAY_FLAG;
 }
 
 // Bounce limits

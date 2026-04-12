@@ -85,8 +85,8 @@ public:
 	constexpr static uint32_t RT_MAX_BOUNCES_MASK = 0x7;
 
 	// RT pipeline limits (must match GLSL payload/hit attribute struct sizes).
-	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 9;
-	constexpr static uint32_t RT_MAX_PAYLOAD_SIZE = 32;
+	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 1;
+	constexpr static uint32_t RT_MAX_PAYLOAD_SIZE = 56; // PathPayload: 32 base + 24 (next_ray_origin + next_ray_dir)
 	constexpr static uint32_t RT_MAX_HIT_ATTRIB_SIZE = 8;
 
 	// Pathtracing parameter indices - aliased from the shared enum in rendering_server_enums.h.

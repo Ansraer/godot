@@ -277,6 +277,8 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 		payload.packed_bounces_flags = inc_total_bounce(payload.packed_bounces_flags);
 	}
 
-	vec3 ray_origin = offset_ray_origin(h.hit_pos, h.geometry_normal);
-	traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, next_dir, 10000.0, 0);
+	// Write next bounce info to payload for raygen to trace iteratively.
+	payload.next_ray_origin = offset_ray_origin(h.hit_pos, h.geometry_normal);
+	payload.next_ray_dir = next_dir;
+	payload.packed_bounces_flags = set_continue_ray(payload.packed_bounces_flags);
 }

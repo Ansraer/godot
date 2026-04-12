@@ -13,6 +13,7 @@
 
 #pragma shader_stage(raygen)
 #extension GL_EXT_ray_tracing : enable
+#extension GL_EXT_shader_invocation_reorder : enable
 
 #include "raytracing_common_inc.glsl"
 
@@ -51,7 +52,33 @@ void main() {
 		payload.packed_bounces_flags = (sample_idx == 0u) ? set_sample_zero(0u) : 0u;
 		payload.rng_state = init_rng(pixel, frame_index, sample_idx);
 
-		traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, origin.xyz, 0.001, direction.xyz, 10000.0, 0);
+		vec3 ray_origin = origin.xyz;
+		vec3 ray_dir = direction.xyz;
+
+		// Iterative bounce loop with Shader Execution Reordering
+		[[dont_unroll]] for (uint bounce = 0u; bounce <= RT_GET_MAX_BOUNCES(); bounce++) {
+			hitObjectEXT hit_object;
+			hitObjectTraceRayEXT(hit_object, tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
+
+			// Reorder with a coherence hint that has 8 bits
+			// TODO: this hint is pretty redundant. Ideally we would have information about the control flow instead
+			uint hint = 0;
+			if (hitObjectIsHitEXT(hit_object)) {
+				hint = hitObjectGetInstanceIdEXT(hit_object);
+			}
+			reorderThreadEXT(hit_object, hint, 8);
+
+			hitObjectExecuteShaderEXT(hit_object, 0);
+
+			if (!should_continue_ray(payload.packed_bounces_flags)) {
+				break;
+			}
+
+			// Set up next iteration from bounce info written by closest_hit.
+			ray_origin = payload.next_ray_origin;
+			ray_dir = payload.next_ray_dir;
+			payload.packed_bounces_flags = clear_continue_ray(payload.packed_bounces_flags);
+		}
 
 		total_radiance += payload.radiance;
 	}
@@ -86,20 +113,14 @@ layout(set = 0, binding = 7) uniform texture2D radiance_octmap;
 layout(set = 0, binding = 8) uniform sampler radiance_sampler;
 
 void main() {
-	// Shadow rays that miss mean the light is visible (no occluder).
-	if (is_shadow_ray(payload.packed_bounces_flags)) {
-		payload.radiance = vec3(1.0);
-		return;
-	}
-
 	// Debug visualization mode handling
 	if ((RT_FLAGS & RT_FLAG_DEBUG_VIS_ENABLED) != 0u) {
 		int VIS_MODE = int(get_rt_param(RT_PARAM_VIS_MODE));
 
 		// Special handling for specular hit distance mode
 		if (VIS_MODE == 13 && get_total_bounces(payload.packed_bounces_flags) > 0u) {
-			// Return -1 to signal sky hit
-			payload.radiance = vec3(-1.0, 0.0, 0.0);
+			// Sky hit - dark blue (no specular hit found)
+			payload.radiance = vec3(0.1, 0.1, 0.4);
 			return;
 		}
 	}
@@ -245,8 +266,9 @@ void debug_visualize(
 			payload.packed_bounces_flags = inc_total_bounce(payload.packed_bounces_flags);
 			vec3 hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 			vec3 reflect_dir = reflect(gl_WorldRayDirectionEXT, geometry_normal);
-			vec3 ray_origin = hit_pos + geometry_normal * 0.01;
-			traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, reflect_dir, 10000.0, 0);
+			payload.next_ray_origin = hit_pos + geometry_normal * 0.01;
+			payload.next_ray_dir = reflect_dir;
+			payload.packed_bounces_flags = set_continue_ray(payload.packed_bounces_flags);
 		} else {
 			payload.radiance = geometry_normal * 0.5 + 0.5;
 		}
@@ -296,35 +318,26 @@ void debug_visualize(
 				payload.radiance = vec3(-1.0, 0.0, 0.0); // Initialize to sky value before trace
 				vec3 hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 				vec3 reflect_dir = reflect(gl_WorldRayDirectionEXT, final_normal);
-				vec3 ray_origin = hit_pos + final_normal * 0.01;
-				traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, reflect_dir, 10000.0, 0);
-				float spec_hit_t = payload.radiance.r;
-
-				// Negative = sky/miss (show as dark blue), positive = hit distance
-				if (spec_hit_t < 0.0) {
-					payload.radiance = vec3(0.1, 0.1, 0.4); // Dark blue for sky
-				} else {
-					// Log scale for better visibility (range ~0.01 to 1000)
-					float v = clamp(log(spec_hit_t + 1.0) / log(1000.0), 0.0, 1.0);
-
-					// Heat map: black -> red -> yellow -> white
-					vec3 color;
-					if (v < 0.33) {
-						color = mix(vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), v * 3.0);
-					} else if (v < 0.66) {
-						color = mix(vec3(1.0, 0.0, 0.0), vec3(1.0, 1.0, 0.0), (v - 0.33) * 3.0);
-					} else {
-						color = mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 1.0, 1.0), (v - 0.66) * 3.0);
-					}
-					payload.radiance = color;
-				}
+				payload.next_ray_origin = hit_pos + final_normal * 0.01;
+				payload.next_ray_dir = reflect_dir;
+				payload.packed_bounces_flags = set_continue_ray(payload.packed_bounces_flags);
 			} else {
 				// Too rough for meaningful specular reflection - use same color as sky/miss
 				payload.radiance = vec3(0.1, 0.1, 0.4);
 			}
 		} else {
-			// Secondary ray - return hit distance
-			payload.radiance = vec3(gl_HitTEXT, 0.0, 0.0);
+			// Secondary ray hit - convert hit distance to heat map visualization.
+			float spec_hit_t = gl_HitTEXT;
+			float v = clamp(log(spec_hit_t + 1.0) / log(1000.0), 0.0, 1.0);
+			vec3 color;
+			if (v < 0.33) {
+				color = mix(vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), v * 3.0);
+			} else if (v < 0.66) {
+				color = mix(vec3(1.0, 0.0, 0.0), vec3(1.0, 1.0, 0.0), (v - 0.33) * 3.0);
+			} else {
+				color = mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 1.0, 1.0), (v - 0.66) * 3.0);
+			}
+			payload.radiance = color;
 		}
 	} else if (vis_mode == 14) {
 		// Metalness
@@ -377,13 +390,9 @@ void main() {
 #include "raytracing_custom_fragment_inc.glsl"
 
 	// Alpha scissor: treat pixel as fully transparent if below threshold.
+	// The any_hit shader handles this via ignoreIntersectionEXT, so this
+	// should not normally be reached.
 	if (alpha_scissor_threshold > 0.0 && alpha < alpha_scissor_threshold) {
-		payload.radiance = vec3(0.0);
-		payload.packed_bounces_flags = inc_total_bounce(payload.packed_bounces_flags);
-		vec3 hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
-		traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0,
-				hit_pos + gl_WorldRayDirectionEXT * 0.001, 0.0,
-				gl_WorldRayDirectionEXT, 10000.0, 0);
 		return;
 	}
 

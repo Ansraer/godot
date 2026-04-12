@@ -1,6 +1,6 @@
 // Light sampling and Next Event Estimation (NEE) for raytracing.
 // Requires: raytracing_inc.glsl, brdf_inc.glsl, tlas at binding 1, payload at location 0.
-// Note: ray_query_alpha_test() still requires GL_EXT_ray_query (used by DLSS-RR path).
+// Requires: GL_EXT_ray_query for inline shadow rays and alpha test queries.
 
 // ============================================================================
 // Light Types and Constants
@@ -182,38 +182,30 @@ bool ray_query_alpha_test(uint geometry_idx, uint primitive_id, vec2 candidate_b
 }
 
 // ============================================================================
-// Shadow Ray (traceRayEXT pipeline)
+// Shadow Ray (inline ray query)
 // ============================================================================
 
-/// Trace shadow ray using traceRayEXT. Returns true if light is visible.
-/// Uses SkipClosestHitShader so only any_hit (alpha test) and miss are invoked.
-/// TerminateOnFirstHit causes early exit on first confirmed opaque hit.
-/// The miss shader writes radiance = vec3(1.0) for shadow rays (visible).
-/// If an opaque hit occurs, miss is never called and radiance stays vec3(0.0).
+/// Trace shadow ray using inline ray query. Returns true if light is visible.
+/// Uses TerminateOnFirstHit for early exit on first confirmed opaque hit.
+/// Transparent surfaces are handled via ray_query_alpha_test().
 bool lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, inout uint rng_state) {
-	// Save payload state (shadow trace overwrites it).
-	vec3 saved_radiance = payload.radiance;
-	vec3 saved_throughput = payload.throughput;
-	uint saved_flags = payload.packed_bounces_flags;
+	rayQueryEXT shadow_rq;
+	rayQueryInitializeEXT(shadow_rq, tlas,
+			gl_RayFlagsTerminateOnFirstHitEXT,
+			0xFF, origin, 0.001, direction, max_dist - 0.001);
 
-	// Set up shadow ray: zero radiance, flag as shadow.
-	payload.radiance = vec3(0.0);
-	payload.packed_bounces_flags = set_shadow_ray(0u);
+	while (rayQueryProceedEXT(shadow_rq)) {
+		if (rayQueryGetIntersectionTypeEXT(shadow_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT) {
+			if (ray_query_alpha_test(
+						rayQueryGetIntersectionInstanceCustomIndexEXT(shadow_rq, false),
+						rayQueryGetIntersectionPrimitiveIndexEXT(shadow_rq, false),
+						rayQueryGetIntersectionBarycentricsEXT(shadow_rq, false))) {
+				rayQueryConfirmIntersectionEXT(shadow_rq);
+			}
+		}
+	}
 
-	traceRayEXT(tlas,
-			gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-			0xFF, 0, 0, 0,
-			origin, 0.001, direction, max_dist - 0.001, 0);
-
-	// radiance.x > 0.5 means miss shader fired (no occluder).
-	bool visible = payload.radiance.x > 0.5;
-
-	// Restore payload state.
-	payload.radiance = saved_radiance;
-	payload.throughput = saved_throughput;
-	payload.packed_bounces_flags = saved_flags;
-
-	return visible;
+	return rayQueryGetIntersectionTypeEXT(shadow_rq, true) == gl_RayQueryCommittedIntersectionNoneEXT;
 }
 
 // ============================================================================
