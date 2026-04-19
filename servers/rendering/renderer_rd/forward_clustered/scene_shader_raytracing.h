@@ -76,6 +76,8 @@ public:
 		RT_FLAG_DEBUG_VIS_ENABLED = (1 << 0),
 		RT_FLAG_DLSS_RR_ENABLED = (1 << 1),
 		RT_FLAG_FOG_ENABLED = (1 << 2),
+		// TODO: Remove once SER benchmarking is complete, should probably be always on
+		RT_FLAG_SER_ENABLED = (1 << 3),
 	};
 
 	constexpr static uint32_t RT_SAMPLE_COUNT_SHIFT = 8;
@@ -85,7 +87,9 @@ public:
 	constexpr static uint32_t RT_MAX_BOUNCES_MASK = 0x7;
 
 	// RT pipeline limits (must match GLSL payload/hit attribute struct sizes).
-	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 9;
+	// 1: primary/bounce from raygen
+	// 2: shadow ray from closest_hit (NEE)
+	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Pathtracing parameter indices - aliased from the shared enum in rendering_server_enums.h.
 	static constexpr int RT_PARAM_VIS_MODE = RSE::PT_PARAM_VIS_MODE;

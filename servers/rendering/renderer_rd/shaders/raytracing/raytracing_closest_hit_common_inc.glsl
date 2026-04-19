@@ -256,6 +256,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 
 	// Bounce limit check.
 	if (total_bounces >= RT_GET_MAX_BOUNCES() || diffuse_bounces >= MAX_DIFFUSE_BOUNCES) {
+		ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
 		path_pack(payload, ps);
 		return;
 	}
@@ -354,6 +355,8 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	vec3 next_dir;
 	vec3 brdf_weight;
 	if (!evalIndirectCombinedBRDF(u, m.normal, h.geometry_normal, V, brdf_mat, brdfType, next_dir, brdf_weight, vec4(0.0))) {
+		// No valid next-bounce direction -- terminate here.
+		ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
 		path_pack(payload, ps);
 		return;
 	}
@@ -366,7 +369,9 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 		ps.packed_bounces_flags = inc_total_bounce(ps.packed_bounces_flags);
 	}
 
+	// Hand the next ray back to raygen. PATH_TERMINATED_FLAG stays clear so
+	// the raygen loop continues with (next_ray_origin, next_ray_dir).
+	ps.next_ray_origin = offset_ray_origin(h.hit_pos, h.geometry_normal);
+	ps.next_ray_dir = next_dir;
 	path_pack(payload, ps);
-	vec3 ray_origin = offset_ray_origin(h.hit_pos, h.geometry_normal);
-	traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, next_dir, 10000.0, 0);
 }

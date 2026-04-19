@@ -185,17 +185,29 @@ bool ray_query_alpha_test(uint geometry_idx, uint primitive_id, vec2 candidate_b
 // Shadow Ray (traceRayEXT pipeline)
 // ============================================================================
 
-/// Trace shadow ray using traceRayEXT. Returns true if light is visible.
+/// Returns true if light is visible.
 /// Uses SkipClosestHitShader so only any_hit (alpha test) and miss are invoked.
 /// TerminateOnFirstHit causes early exit on first confirmed opaque hit.
-/// The miss shader writes radiance = vec3(1.0) for shadow rays (visible).
-/// If an opaque hit occurs, miss is never called and radiance stays vec3(0.0).
 bool lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, inout uint rng_state) {
+#ifdef USE_SER
+	hitObjectEXT hitObject;
+	hitObjectTraceRayEXT(hitObject, tlas,
+		gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+		0xFF, 0, 0, 0,
+		origin, 0.001, direction, max_dist - 0.001, 0);
+
+	return !(hitObjectIsHitEXT(hitObject));
+#else
+	/// The miss shader writes radiance = vec3(1.0) for shadow rays (visible).
+	/// If an opaque hit occurs, miss is never called and radiance stays vec3(0.0).
 	// Save packed payload state (shadow trace overwrites it).
+
 	uint saved_rt0 = payload.packed_rt[0];
 	uint saved_rt1 = payload.packed_rt[1];
 	uint saved_rt2 = payload.packed_rt[2];
 	uint saved_flags = payload.packed_bounces_flags;
+	vec3 saved_next_origin = payload.next_ray_origin;
+	vec2 saved_next_dir = payload.oct_next_dir;
 
 	// Set up shadow ray: zero radiance, flag as shadow.
 	PathState shadow_ps;
@@ -203,6 +215,8 @@ bool lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, inout 
 	shadow_ps.throughput = vec3(0.0);
 	shadow_ps.packed_bounces_flags = set_shadow_ray(0u);
 	shadow_ps.rng_state = 0u;
+	shadow_ps.next_ray_origin = vec3(0.0);
+	shadow_ps.next_ray_dir = vec3(0.0, 0.0, 1.0);
 	path_pack(payload, shadow_ps);
 
 	traceRayEXT(tlas,
@@ -214,13 +228,16 @@ bool lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, inout 
 	shadow_ps = path_unpack(payload);
 	bool visible = shadow_ps.radiance.x > 0.5;
 
-	// Restore packed payload state.
+	// Restore packed payload state
 	payload.packed_rt[0] = saved_rt0;
 	payload.packed_rt[1] = saved_rt1;
 	payload.packed_rt[2] = saved_rt2;
 	payload.packed_bounces_flags = saved_flags;
+	payload.next_ray_origin = saved_next_origin;
+	payload.oct_next_dir = saved_next_dir;
 
 	return visible;
+#endif
 }
 
 // ============================================================================

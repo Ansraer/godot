@@ -3810,6 +3810,9 @@ void RenderingServer::init() {
 
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/limits/cluster_builder/max_clustered_elements", PROPERTY_HINT_RANGE, "32,8192,1"), 512);
 
+	// TODO: Remove this setting once SER benchmarking is complete, we prob want to always enable it
+	GLOBAL_DEF("rendering/pathtracer/use_shader_execution_reordering", true);
+
 	// OpenGL limits
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/limits/opengl/max_renderable_elements", PROPERTY_HINT_RANGE, "1024,65536,1"), 65536);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/limits/opengl/max_renderable_lights", PROPERTY_HINT_RANGE, "2,256,1"), 32);

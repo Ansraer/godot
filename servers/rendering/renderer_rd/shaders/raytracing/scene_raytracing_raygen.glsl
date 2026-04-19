@@ -13,6 +13,9 @@
 
 #pragma shader_stage(raygen)
 #extension GL_EXT_ray_tracing : enable
+#ifdef USE_SER
+#extension GL_EXT_shader_invocation_reorder : enable
+#endif
 
 #define GLSL 1
 #define RT_STAGE_RAYGEN 1
@@ -45,17 +48,49 @@ void main() {
 	// Accumulate multiple samples per pixel
 	vec3 total_radiance = vec3(0.0);
 
+	const uint max_bounces = RT_GET_MAX_BOUNCES();
+
+	// TODO: when we have a spp > 0 the first raycast is always identical,
+	// we should move it out of the loop
+
 	[[dont_unroll]] for (uint sample_idx = 0u; sample_idx < samples_per_pixel; sample_idx++) {
 		PathState ps;
 		ps.radiance = vec3(0.0);
 		ps.throughput = vec3(1.0);
 		ps.packed_bounces_flags = (sample_idx == 0u) ? set_sample_zero(0u) : 0u;
 		ps.rng_state = init_rng(pixel, frame_index, sample_idx);
-		path_pack(payload, ps);
 
-		traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, origin.xyz, 0.001, direction.xyz, 10000.0, 0);
+		vec3 ray_origin = origin.xyz;
+		vec3 ray_dir = direction.xyz;
 
-		ps = path_unpack(payload);
+		[[dont_unroll]] for (uint bounce = 0u; bounce <= max_bounces; bounce++) {
+			path_pack(payload, ps);
+
+#ifdef USE_SER
+			hitObjectEXT hitObject;
+			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
+
+			// Reorder with a coherence hint that has 8 bits
+			uint hint = 0;
+			if (hitObjectIsHitEXT(hitObject)) {
+				// TODO: This hint barely does anyhting. There is a lot of untapped potential here.
+				hint = hitObjectGetInstanceIdEXT(hitObject);
+			}
+			reorderThreadEXT(hitObject, hint, 8);
+
+			hitObjectExecuteShaderEXT(hitObject, 0);
+#else
+			traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
+#endif
+
+			ps = path_unpack(payload);
+			if (is_path_terminated(ps.packed_bounces_flags)) {
+				break;
+			}
+			ray_origin = ps.next_ray_origin;
+			ray_dir = ps.next_ray_dir;
+		}
+
 		total_radiance += ps.radiance;
 	}
 
@@ -78,7 +113,6 @@ void main() {
 
 // clang-format off
 #include "raytracing_inc.glsl"
-#include "../oct_inc.glsl"
 #include "../scene_data_inc.glsl"
 #include "brdf_inc.glsl"
 #include "raytracing_common_inc.glsl"
@@ -92,20 +126,25 @@ layout(set = 0, binding = 8) uniform sampler radiance_sampler;
 void main() {
 	PathState ps = path_unpack(payload);
 
+#if !defined(USE_SER)
 	// Shadow rays that miss mean the light is visible (no occluder).
 	if (is_shadow_ray(ps.packed_bounces_flags)) {
 		ps.radiance = vec3(1.0);
 		path_pack(payload, ps);
 		return;
 	}
+#endif
+
+	// Miss always ends the path.
+	ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
 
 	// Debug visualization mode handling
 	if ((RT_FLAGS & RT_FLAG_DEBUG_VIS_ENABLED) != 0u) {
 		int VIS_MODE = int(get_rt_param(RT_PARAM_VIS_MODE));
 
-		// Special handling for specular hit distance mode
+		// Specular hit distance: the first-bounce closest_hit pre-seeds the
+		// "no hit" color into radiance, so a missed reflection just keeps it.
 		if (VIS_MODE == 13 && get_total_bounces(ps.packed_bounces_flags) > 0u) {
-			ps.radiance = vec3(-1.0, 0.0, 0.0);
 			path_pack(payload, ps);
 			return;
 		}
@@ -188,13 +227,15 @@ void main() {
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_ARB_gpu_shader_int64 : require
 #extension GL_EXT_nonuniform_qualifier : require
+#ifdef USE_SER
+#extension GL_EXT_shader_invocation_reorder : enable
+#endif
 
 #define GLSL 1
 #define RT_STAGE_CLOSEST_HIT 1
 
 // clang-format off
 #include "raytracing_inc.glsl"
-#include "../oct_inc.glsl"
 #include "../scene_data_inc.glsl"
 #include "brdf_inc.glsl"
 #include "raytracing_common_inc.glsl"
@@ -262,9 +303,9 @@ void debug_visualize(
 			ps.packed_bounces_flags = inc_total_bounce(ps.packed_bounces_flags);
 			vec3 hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 			vec3 reflect_dir = reflect(gl_WorldRayDirectionEXT, geometry_normal);
-			vec3 ray_origin = hit_pos + geometry_normal * 0.01;
+			ps.next_ray_origin = hit_pos + geometry_normal * 0.01;
+			ps.next_ray_dir = reflect_dir;
 			path_pack(payload, ps);
-			traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, reflect_dir, 10000.0, 0);
 			return;
 		} else {
 			ps.radiance = geometry_normal * 0.5 + 0.5;
@@ -295,34 +336,29 @@ void debug_visualize(
 		if (get_total_bounces(ps.packed_bounces_flags) == 0u) {
 			if (roughness < MAX_DENOISER_SPECULAR_HIT_THRESHOLD) {
 				ps.packed_bounces_flags = inc_total_bounce(ps.packed_bounces_flags);
-				ps.radiance = vec3(-1.0, 0.0, 0.0);
+				ps.radiance = vec3(0.1, 0.1, 0.4);
 				vec3 hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 				vec3 reflect_dir = reflect(gl_WorldRayDirectionEXT, final_normal);
-				vec3 ray_origin = hit_pos + final_normal * 0.01;
+				ps.next_ray_origin = hit_pos + final_normal * 0.01;
+				ps.next_ray_dir = reflect_dir;
 				path_pack(payload, ps);
-				traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0, ray_origin, 0.001, reflect_dir, 10000.0, 0);
-				ps = path_unpack(payload);
-				float spec_hit_t = ps.radiance.r;
-
-				if (spec_hit_t < 0.0) {
-					ps.radiance = vec3(0.1, 0.1, 0.4);
-				} else {
-					float v = clamp(log(spec_hit_t + 1.0) / log(1000.0), 0.0, 1.0);
-					vec3 color;
-					if (v < 0.33) {
-						color = mix(vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), v * 3.0);
-					} else if (v < 0.66) {
-						color = mix(vec3(1.0, 0.0, 0.0), vec3(1.0, 1.0, 0.0), (v - 0.33) * 3.0);
-					} else {
-						color = mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 1.0, 1.0), (v - 0.66) * 3.0);
-					}
-					ps.radiance = color;
-				}
+				return;
 			} else {
 				ps.radiance = vec3(0.1, 0.1, 0.4);
 			}
 		} else {
-			ps.radiance = vec3(gl_HitTEXT, 0.0, 0.0);
+			// Second bounce: map reflection hit distance to a gradient color.
+			float spec_hit_t = gl_HitTEXT;
+			float v = clamp(log(spec_hit_t + 1.0) / log(1000.0), 0.0, 1.0);
+			vec3 color;
+			if (v < 0.33) {
+				color = mix(vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), v * 3.0);
+			} else if (v < 0.66) {
+				color = mix(vec3(1.0, 0.0, 0.0), vec3(1.0, 1.0, 0.0), (v - 0.33) * 3.0);
+			} else {
+				color = mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 1.0, 1.0), (v - 0.66) * 3.0);
+			}
+			ps.radiance = color;
 		}
 	} else if (vis_mode == 14) {
 		ps.radiance = vec3(metalness);
@@ -346,6 +382,8 @@ void debug_visualize(
 		ps.radiance = vec3(d);
 	}
 
+	// All fall-through debug modes are terminal.
+	ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
 	path_pack(payload, ps);
 }
 
@@ -376,18 +414,6 @@ void main() {
 
 #include "raytracing_custom_fragment_inc.glsl"
 
-	// Alpha scissor: treat pixel as fully transparent if below threshold.
-	if (alpha_scissor_threshold > 0.0 && alpha < alpha_scissor_threshold) {
-		PathState ps = path_unpack(payload);
-		ps.radiance = vec3(0.0);
-		ps.packed_bounces_flags = inc_total_bounce(ps.packed_bounces_flags);
-		path_pack(payload, ps);
-		vec3 hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
-		traceRayEXT(tlas, RT_RAY_FLAGS, 0xFF, 0, 0, 0,
-				hit_pos + gl_WorldRayDirectionEXT * 0.001, 0.0,
-				gl_WorldRayDirectionEXT, 10000.0, 0);
-		return;
-	}
 
 	// Build MaterialResult from fragment outputs.
 	MaterialResult m;
@@ -479,7 +505,6 @@ void main() {
 
 // clang-format off
 #include "raytracing_inc.glsl"
-#include "../oct_inc.glsl"
 #include "../scene_data_inc.glsl"
 #include "raytracing_common_inc.glsl"
 // clang-format on

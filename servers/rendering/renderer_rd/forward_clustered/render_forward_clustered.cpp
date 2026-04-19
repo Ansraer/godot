@@ -2951,7 +2951,6 @@ void RenderForwardClustered::_render_buffers_debug_draw(const RenderDataRD *p_re
 		if (get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_DLSS_RR_SPECULAR_HIT_DIST) {
 			copy_effects->copy_to_fb_rect(rb_data->dlss_rr_get_specular_hit_dist(), fb, Rect2(Vector2(), rtsize), false, true);
 		}
-
 	}
 
 	if (get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_RECONSTRUCTED_DEPTH && rb->has_texture(RB_SCOPE_BUFFERS, RB_TEX_RECONSTRUCTED_DEPTH)) {

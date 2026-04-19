@@ -655,6 +655,10 @@ uint32_t SceneShaderRaytracing::compute_rt_flags(const float *p_env_params, bool
 		flags |= RT_FLAG_FOG_ENABLED;
 	}
 
+	if (GLOBAL_GET("rendering/pathtracer/use_shader_execution_reordering")) {
+		flags |= RT_FLAG_SER_ENABLED;
+	}
+
 	return rt_flags_pack(flags, sample_count, max_bounces);
 }
 
@@ -678,7 +682,9 @@ const SceneShaderRaytracing::PipelineBundle &SceneShaderRaytracing::ensure_pipel
 
 	ERR_FAIL_COND_V(!raygen_shader_version.is_valid(), EMPTY_BUNDLE);
 
-	int variant = (p_rt_flags & RT_FLAG_DLSS_RR_ENABLED) ? 1 : 0;
+	int dlss_bit = (p_rt_flags & RT_FLAG_DLSS_RR_ENABLED) ? 1 : 0;
+	int ser_bit = (p_rt_flags & RT_FLAG_SER_ENABLED) ? 1 : 0;
+	int variant = ser_bit * 2 + dlss_bit;
 
 	Vector<String> sources = raygen_shader.version_build_variant_stage_sources(raygen_shader_version, variant);
 	ERR_FAIL_COND_V(sources.is_empty(), EMPTY_BUNDLE);
@@ -964,10 +970,17 @@ const SceneShaderRaytracing::PipelineBundle &SceneShaderRaytracing::ensure_pipel
 void SceneShaderRaytracing::init(const String p_defines) {
 	// For raytracing: The raygen shader has embedded code via setup_raytracing() in its constructor
 	// setup_raytracing() set pipeline_type = RAYTRACING, so initialize() will use raytracing stages
-	// Two shader variants: 0 = base, 1 = with DLSS RR bindings (compiled on-demand)
+	// Shader variants (compiled on-demand):
+	// Variant 0: Base
+	// Variant 1: DLSS RR
+	// Variant 2: SER
+	// Variant 3: SER + DLSS RR
+	// TODO: Remove SER variants once SER benchmarking is complete, keep them always enabled.
 	Vector<String> modes;
-	modes.push_back("\n"); // Variant 0: Base (no DLSS RR)
-	modes.push_back("\n#define DLSS_RR_ENABLED\n"); // Variant 1: With DLSS RR bindings (lazy)
+	modes.push_back("\n");
+	modes.push_back("\n#define DLSS_RR_ENABLED\n");
+	modes.push_back("\n#define USE_SER\n");
+	modes.push_back("\n#define DLSS_RR_ENABLED\n#define USE_SER\n");
 	raygen_shader.initialize(modes, p_defines);
 
 	// Now create a version to access the embedded raytracing shader
