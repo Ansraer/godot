@@ -1417,6 +1417,10 @@ public:
 	};
 
 	Error blas_build(RID p_blas);
+	// In-place refit of a BLAS that was created with ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT and
+	// previously fully built; only vertex positions may have changed since then. Significantly
+	// cheaper than blas_build for skinned/animated meshes.
+	Error blas_update(RID p_blas);
 	Error tlas_build(RID p_tlas, Span<AccelerationStructureInstance> p_instances);
 
 private:

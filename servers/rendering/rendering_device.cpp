@@ -514,6 +514,27 @@ Error RenderingDevice::blas_build(RID p_blas) {
 	return OK;
 }
 
+Error RenderingDevice::blas_update(RID p_blas) {
+	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
+
+	ERR_FAIL_COND_V_MSG(draw_list.active, ERR_INVALID_PARAMETER, "Updating BLAS is forbidden during creation of a draw list.");
+	ERR_FAIL_COND_V_MSG(compute_list.active, ERR_INVALID_PARAMETER, "Updating BLAS is forbidden during creation of a compute list.");
+	ERR_FAIL_COND_V_MSG(raytracing_list.active, ERR_INVALID_PARAMETER, "Updating BLAS is forbidden during creation of a raytracing list.");
+
+	AccelerationStructure *blas = acceleration_structure_owner.get_or_null(p_blas);
+	ERR_FAIL_NULL_V_MSG(blas, ERR_INVALID_PARAMETER, "BLAS argument is not valid.");
+
+	Error err = _acceleration_structure_scratch_buffer_create(blas);
+	ERR_FAIL_COND_V(err != OK, err);
+
+	draw_graph.add_blas_update(blas->driver_id, blas->scratch_buffer, blas->draw_tracker, blas->draw_trackers);
+
+	blas->invalidated = false;
+	_blas_remove_tlas_dependencies(blas, p_blas);
+
+	return OK;
+}
+
 Error RenderingDevice::tlas_build(RID p_tlas, Span<AccelerationStructureInstance> p_instances) {
 	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
 

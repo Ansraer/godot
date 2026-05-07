@@ -44,7 +44,11 @@ struct GeometryData {
 	float aabb_pos_y;
 	float aabb_pos_z;
 
-	uint _pad[7];
+	// For deformed geometry: previous-frame position buffer used for motion vectors.
+	uint prev_vertex_address_lo;
+	uint prev_vertex_address_hi;
+
+	uint _pad[5];
 };
 
 void get_aabb_compression_xforms(GeometryData geom, out mat4 aabb_xform, out mat4 inv_aabb_xform) {

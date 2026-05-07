@@ -485,6 +485,39 @@ public:
 		return s->vertex_buffer;
 	}
 
+	/// Get the per-mesh-instance skinned/blend-shape vertex buffer for the current frame.
+	/// Returns RID() when this surface is not deformed (caller should fall back to mesh_surface_get_vertex_buffer).
+	_FORCE_INLINE_ RID mesh_instance_get_vertex_buffer(RID p_mesh_instance, uint32_t p_surface_index) {
+		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
+		if (!mi || p_surface_index >= mi->surfaces.size()) {
+			return RID();
+		}
+		const MeshInstance::Surface &mis = mi->surfaces[p_surface_index];
+		return mis.vertex_buffer[mis.current_buffer];
+	}
+
+	/// Get the previous-frame skinned vertex buffer (for motion vector reconstruction).
+	/// Returns the current buffer when the surface was not updated this frame, or when
+	/// update_mesh_instances() did not double-buffer this surface.
+	_FORCE_INLINE_ RID mesh_instance_get_prev_vertex_buffer(RID p_mesh_instance, uint32_t p_surface_index) {
+		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
+		if (!mi || p_surface_index >= mi->surfaces.size()) {
+			return RID();
+		}
+		const MeshInstance::Surface &mis = mi->surfaces[p_surface_index];
+		uint32_t previous_buffer = RSG::rasterizer->get_frame_number() == mis.last_change ? mis.previous_buffer : mis.current_buffer;
+		return mis.vertex_buffer[previous_buffer];
+	}
+
+	/// Frame number on which this mesh-instance surface was last skinned (0 if never deformed).
+	_FORCE_INLINE_ uint64_t mesh_instance_get_last_change(RID p_mesh_instance, uint32_t p_surface_index) {
+		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
+		if (!mi || p_surface_index >= mi->surfaces.size()) {
+			return 0;
+		}
+		return mi->surfaces[p_surface_index].last_change;
+	}
+
 	/// Get the attribute buffer RID for raytracing device address access.
 	_FORCE_INLINE_ RID mesh_surface_get_attribute_buffer(void *p_surface) {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);

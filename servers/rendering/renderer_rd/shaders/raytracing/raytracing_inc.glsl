@@ -140,6 +140,8 @@ bool is_path_terminated(uint packed) {
 const uint OFFSET_NONE = 0xFFFFFFFFu;
 const uint FLAG_COMPRESSED = 1u;
 const uint FLAG_PROCEDURAL = 2u;
+// Set when the BLAS uses a per-frame-deformed vertex buffer.
+const uint FLAG_DEFORMED = 4u;
 
 // ============================================================================
 // RANDOM NUMBER GENERATION - PCG (Permuted Congruential Generator)

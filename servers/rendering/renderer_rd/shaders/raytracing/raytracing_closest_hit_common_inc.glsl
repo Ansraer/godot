@@ -166,10 +166,34 @@ void write_primary_hit_velocity(vec3 hit_pos) {
 	vec3 obj_pos = (mat4(gl_WorldToObjectEXT) * vec4(hit_pos, 1.0)).xyz;
 	vec3 prev_obj_pos = obj_pos;
 
-#ifdef ENABLE_INTERSECTION_SHADERS
 	GeometryData geom = geometries[geom_idx];
+
+#ifdef ENABLE_INTERSECTION_SHADERS
 	if ((geom.flags & FLAG_PROCEDURAL) != 0u) {
 		prev_obj_pos += decode_prev_pos_delta();
+	}
+#endif
+
+#ifdef RT_HIT_ATTRIBS_DECLARED
+	if ((geom.flags & FLAG_DEFORMED) != 0u) {
+		uint64_t prev_addr = packUint2x32(uvec2(geom.prev_vertex_address_lo, geom.prev_vertex_address_hi));
+		if (prev_addr != 0ul) {
+			uint i0, i1, i2;
+			get_triangle_indices(geom, i0, i1, i2);
+			vec3 bary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
+			FloatBuffer prev_vb = FloatBuffer(prev_addr);
+			uint stride_floats = geom.position_stride >> 2;
+			vec3 p0 = vec3(prev_vb.v[i0 * stride_floats + 0u],
+					prev_vb.v[i0 * stride_floats + 1u],
+					prev_vb.v[i0 * stride_floats + 2u]);
+			vec3 p1 = vec3(prev_vb.v[i1 * stride_floats + 0u],
+					prev_vb.v[i1 * stride_floats + 1u],
+					prev_vb.v[i1 * stride_floats + 2u]);
+			vec3 p2 = vec3(prev_vb.v[i2 * stride_floats + 0u],
+					prev_vb.v[i2 * stride_floats + 1u],
+					prev_vb.v[i2 * stride_floats + 2u]);
+			prev_obj_pos = bary.x * p0 + bary.y * p1 + bary.z * p2;
+		}
 	}
 #endif
 

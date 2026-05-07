@@ -79,7 +79,10 @@ struct alignas(16) RT_GeometryData {
 	float aabb_pos_x;
 	float aabb_pos_y;
 	float aabb_pos_z;
-	uint32_t _pad[7];
+	// For deformed geometry: previous-frame position buffer used for motion vectors.
+	uint32_t prev_vertex_buffer_address_lo;
+	uint32_t prev_vertex_buffer_address_hi;
+	uint32_t _pad[5];
 };
 static_assert(sizeof(RT_GeometryData) == 128, "RT_GeometryData must be 128 bytes for std430");
 
@@ -166,6 +169,8 @@ enum {
 enum {
 	RT_GEOM_FLAG_COMPRESSED = 1u,
 	RT_GEOM_FLAG_PROCEDURAL = 2u,
+	// Set when the BLAS uses a per-frame-deformed vertex buffer.
+	RT_GEOM_FLAG_DEFORMED = 4u,
 };
 
 /// Per-instance state for procedural RT geometry. Heap-allocated, only exists for procedural instances.
@@ -187,6 +192,16 @@ struct RTSurfaceData {
 	Transform3D aabb_transform;
 	bool is_compressed = false;
 	uint64_t blas_size = 0;
+};
+
+/// Inputs for a surface backed by a per-frame-deformed vertex buffer.
+struct RTDeformedGeometrySource {
+	RID current_vb; ///< Vertex buffer (object-space positions) the BLAS is built / refit against.
+	RID prev_vb; ///< Previous-frame positions for motion vectors. Optional.
+	uint64_t change_stamp = 0; ///< Changes when `current_vb` contents change.
+	uint64_t cache_key = 0; ///< Caller-defined cache identity.
+	uint32_t cache_version = 0; ///< Changes when the resource behind `cache_key` is recycled.
+	uint32_t surface_counter = 0; ///< Changes when the underlying mesh surface changes.
 };
 
 struct RTMaterialData {
@@ -263,6 +278,18 @@ class RenderRaytracing {
 	// Caching (chunked sparse caches indexed by RID low bits / 256).
 	Vector<RTCacheEntry *> surface_chunks;
 	Vector<RTMaterialCacheEntry *> material_chunks;
+
+	// BLAS cache for surfaces driven by per-frame-deformed vertex buffers.
+	struct RTDeformedCacheEntry {
+		RTSurfaceData *ptr = nullptr;
+		uint32_t last_used_frame = 0;
+		uint64_t cached_change_stamp = 0;
+		uint32_t cached_key_version = 0;
+		uint32_t cached_surface_counter = 0;
+		uint64_t cached_buffer_id = 0; // RID id of the deformed vertex buffer at the time of build.
+		bool blas_built_once = false; // True once the BLAS has been fully built; subsequent ticks can refit.
+	};
+	HashMap<uint64_t, RTDeformedCacheEntry> deformed_surface_cache;
 	LocalVector<uint32_t> material_free_slots;
 	uint32_t next_material_slot = 0;
 	uint64_t vram_used = 0;
@@ -315,9 +342,24 @@ class RenderRaytracing {
 			uint32_t p_surface_invalidation_counter,
 			const Transform3D &p_transform,
 			LocalVector<RID> &r_dirty_blas_list);
+	RTSurfaceData *process_deformed_surface(
+			const void *p_surf,
+			void *p_mesh_surface,
+			const struct RTDeformedGeometrySource &p_source,
+			LocalVector<RID> &r_dirty_blas_list,
+			LocalVector<RID> &r_dirty_blas_update_list);
+	void _populate_surface_blas(
+			void *p_mesh_surface,
+			RID p_vertex_buffer_override,
+			bool p_force_uncompressed,
+			bool p_prefer_fast_build,
+			bool p_allow_update,
+			uint32_t p_cache_key,
+			RTSurfaceData *r_surf_data,
+			LocalVector<RID> &r_dirty_blas_list);
 	RTMaterialData *process_material(RID p_material_rid, uint16_t p_material_invalidation_counter);
 	void update_procedural_blas(RTProceduralState *p_state, LocalVector<RID> &r_dirty_blas_list);
-	void build_acceleration_structures(RTViewportState *p_state, const LocalVector<RID> &p_dirty_blas_list);
+	void build_acceleration_structures(RTViewportState *p_state, const LocalVector<RID> &p_dirty_blas_list, const LocalVector<RID> &p_dirty_blas_update_list);
 	void finalize_buffers(RTViewportState *p_state);
 	void prepare_frame();
 

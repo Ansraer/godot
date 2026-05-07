@@ -243,6 +243,18 @@ void RenderRaytracing::cleanup_caches() {
 	}
 	surface_chunks.clear();
 
+	for (KeyValue<uint64_t, RTDeformedCacheEntry> &kv : deformed_surface_cache) {
+		RTDeformedCacheEntry &e = kv.value;
+		if (e.ptr) {
+			if (e.ptr->blas.is_valid()) {
+				RD::get_singleton()->free_rid(e.ptr->blas);
+			}
+			memdelete(e.ptr);
+			e.ptr = nullptr;
+		}
+	}
+	deformed_surface_cache.clear();
+
 	// Free all cached material data
 	for (uint32_t i = 0; i < material_chunks.size(); i++) {
 		if (material_chunks[i]) {
@@ -348,6 +360,27 @@ void RenderRaytracing::prepare_frame() {
 	motion_transforms.clear();
 
 	// Procedural BLAS/AABB lifetime is on the geometry instance.
+	{
+		const uint32_t DEFORMED_CACHE_TTL_FRAMES = 60;
+		uint32_t current_frame = RSG::rasterizer->get_frame_number();
+		LocalVector<uint64_t> to_remove;
+		for (KeyValue<uint64_t, RTDeformedCacheEntry> &kv : deformed_surface_cache) {
+			RTDeformedCacheEntry &e = kv.value;
+			if (e.last_used_frame != 0 && current_frame - e.last_used_frame > DEFORMED_CACHE_TTL_FRAMES) {
+				if (e.ptr) {
+					if (e.ptr->blas.is_valid()) {
+						RD::get_singleton()->free_rid(e.ptr->blas);
+					}
+					memdelete(e.ptr);
+					e.ptr = nullptr;
+				}
+				to_remove.push_back(kv.key);
+			}
+		}
+		for (uint64_t k : to_remove) {
+			deformed_surface_cache.erase(k);
+		}
+	}
 
 	// Finish async HG compiles so live_ready_mask matches this frame (sync path fills at build_tlas end).
 	SceneShaderRaytracing::get_singleton()->drain_completed_compiles();
@@ -412,41 +445,152 @@ RTSurfaceData *RenderRaytracing::process_surface(
 
 	RTSurfaceData *surf_data = entry->ptr;
 
-	// Get vertex/index arrays for BLAS creation
-	SceneShaderForwardClustered::ShaderData *shader_data = surf->shader;
-	bool emulate_point_size = shader_data->uses_point_size && owner->scene_shader.emulate_point_size;
+	_populate_surface_blas(p_mesh_surface, RID(), false, false, false, cache_key, surf_data, r_dirty_blas_list);
 
-	SceneShaderForwardClustered::ShaderData::PipelineKey pipeline_key;
-	pipeline_key.primitive_type = surf->primitive;
-	pipeline_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_COLOR_PASS;
-	pipeline_key.color_pass_flags = 0;
-	pipeline_key.wireframe = false;
-	pipeline_key.ubershader = 0;
-
-	// Build geometry data
-	uint64_t surface_format = mesh_storage->mesh_surface_get_format(p_mesh_surface);
-	bool compressed = surface_format & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES;
-	bool is_2d = surface_format & RSE::ARRAY_FLAG_USE_2D_VERTICES;
-
-	surf_data->is_compressed = compressed;
-
-	// Compute AABB transform for compressed meshes
-	if (compressed) {
-		AABB surface_aabb = mesh_storage->mesh_surface_get_aabb(p_mesh_surface);
-		surf_data->aabb_transform.basis = Basis::from_scale(surface_aabb.size);
-		surf_data->aabb_transform.origin = surface_aabb.position;
-	} else {
-		surf_data->aabb_transform = Transform3D();
-	}
-
-	// Invalidate per-surface cached final transform since aabb_transform was recomputed.
 	surf->cached_final_transform_valid = false;
 
-	// Populate geometry data
-	RT_GeometryData &geom = surf_data->geometry;
+	if (!surf_data->blas.is_valid()) {
+		return surf_data;
+	}
+
+	entry->cached_counter = p_surface_invalidation_counter;
+	entry->cached_rid_version = mesh_version;
+	entry->last_used_frame = current_frame;
+
+	return surf_data;
+}
+
+// ---------------------------------------------------------------------------
+// Deformed surface processing
+// ---------------------------------------------------------------------------
+
+RTSurfaceData *RenderRaytracing::process_deformed_surface(
+		const void *p_surf,
+		void *p_mesh_surface,
+		const RTDeformedGeometrySource &p_source,
+		LocalVector<RID> &r_dirty_blas_list,
+		LocalVector<RID> &r_dirty_blas_update_list) {
+	const RenderForwardClustered::GeometryInstanceSurfaceDataCache *surf =
+			static_cast<const RenderForwardClustered::GeometryInstanceSurfaceDataCache *>(p_surf);
+
+	if (!p_source.current_vb.is_valid()) {
+		return nullptr;
+	}
+
+	uint32_t current_frame = RSG::rasterizer->get_frame_number();
+	uint64_t buffer_id = p_source.current_vb.get_id();
+
+	RTDeformedCacheEntry &entry = deformed_surface_cache[p_source.cache_key];
+
+	bool needs_refresh = !entry.ptr ||
+			entry.cached_key_version != p_source.cache_version ||
+			entry.cached_surface_counter != p_source.surface_counter ||
+			entry.cached_buffer_id != buffer_id ||
+			entry.cached_change_stamp != p_source.change_stamp;
+
+	auto stamp_deformed_geometry = [&](RTSurfaceData *p_surf_data) {
+		if (!p_surf_data || !p_surf_data->blas.is_valid()) {
+			return;
+		}
+		p_surf_data->geometry.flags |= RT_GEOM_FLAG_DEFORMED;
+		uint64_t prev_addr = 0;
+		if (p_source.prev_vb.is_valid() && p_source.prev_vb != p_source.current_vb) {
+			prev_addr = RD::get_singleton()->buffer_get_device_address(p_source.prev_vb);
+		}
+		p_surf_data->geometry.prev_vertex_buffer_address_lo = static_cast<uint32_t>(prev_addr & 0xFFFFFFFFULL);
+		p_surf_data->geometry.prev_vertex_buffer_address_hi = static_cast<uint32_t>(prev_addr >> 32);
+	};
+
+	if (!needs_refresh && entry.ptr->blas.is_valid()) {
+		cache_hits++;
+		entry.last_used_frame = current_frame;
+		stamp_deformed_geometry(entry.ptr);
+		return entry.ptr;
+	}
+
+	cache_misses++;
+
+	// Refit when only the current deformed vertex buffer contents changed.
+	bool can_refit = entry.ptr && entry.ptr->blas.is_valid() && entry.blas_built_once &&
+			entry.cached_key_version == p_source.cache_version &&
+			entry.cached_surface_counter == p_source.surface_counter &&
+			entry.cached_buffer_id == buffer_id;
+
+	if (can_refit) {
+		RTSurfaceData *surf_data = entry.ptr;
+		r_dirty_blas_update_list.push_back(surf_data->blas);
+		surf->cached_final_transform_valid = false;
+		stamp_deformed_geometry(surf_data);
+		entry.cached_change_stamp = p_source.change_stamp;
+		entry.last_used_frame = current_frame;
+		return surf_data;
+	}
+
+	if (!entry.ptr) {
+		entry.ptr = memnew(RTSurfaceData);
+	} else if (entry.ptr->blas.is_valid()) {
+		RD::get_singleton()->free_rid(entry.ptr->blas);
+		entry.ptr->blas = RID();
+		entry.blas_built_once = false;
+	}
+
+	RTSurfaceData *surf_data = entry.ptr;
+
+	_populate_surface_blas(p_mesh_surface, p_source.current_vb, true, true, true, static_cast<uint32_t>(p_source.cache_key), surf_data, r_dirty_blas_list);
+
+	surf->cached_final_transform_valid = false;
+
+	if (!surf_data->blas.is_valid()) {
+		return surf_data;
+	}
+
+	stamp_deformed_geometry(surf_data);
+
+	entry.blas_built_once = true;
+	entry.cached_change_stamp = p_source.change_stamp;
+	entry.cached_key_version = p_source.cache_version;
+	entry.cached_surface_counter = p_source.surface_counter;
+	entry.cached_buffer_id = buffer_id;
+	entry.last_used_frame = current_frame;
+
+	return surf_data;
+}
+
+// ---------------------------------------------------------------------------
+// Surface BLAS helper (shared between static and deformed paths)
+// ---------------------------------------------------------------------------
+
+void RenderRaytracing::_populate_surface_blas(
+		void *p_mesh_surface,
+		RID p_vertex_buffer_override,
+		bool p_force_uncompressed,
+		bool p_prefer_fast_build,
+		bool p_allow_update,
+		uint32_t p_cache_key,
+		RTSurfaceData *r_surf_data,
+		LocalVector<RID> &r_dirty_blas_list) {
+	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+
+	uint64_t surface_format = mesh_storage->mesh_surface_get_format(p_mesh_surface);
+	bool compressed = (surface_format & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES) && !p_force_uncompressed;
+	bool is_2d = surface_format & RSE::ARRAY_FLAG_USE_2D_VERTICES;
+
+	r_surf_data->is_compressed = compressed;
+
+	if (compressed) {
+		AABB surface_aabb = mesh_storage->mesh_surface_get_aabb(p_mesh_surface);
+		r_surf_data->aabb_transform.basis = Basis::from_scale(surface_aabb.size);
+		r_surf_data->aabb_transform.origin = surface_aabb.position;
+	} else {
+		r_surf_data->aabb_transform = Transform3D();
+	}
+
+	RT_GeometryData &geom = r_surf_data->geometry;
 	memset(&geom, 0, sizeof(geom));
 
-	RID vertex_buffer = mesh_storage->mesh_surface_get_vertex_buffer(p_mesh_surface);
+	RID vertex_buffer = p_vertex_buffer_override.is_valid()
+			? p_vertex_buffer_override
+			: mesh_storage->mesh_surface_get_vertex_buffer(p_mesh_surface);
 	RID attribute_buffer = mesh_storage->mesh_surface_get_attribute_buffer(p_mesh_surface);
 	RID index_buffer = mesh_storage->mesh_surface_get_index_buffer(p_mesh_surface, 0);
 
@@ -591,20 +735,21 @@ RTSurfaceData *RenderRaytracing::process_surface(
 			as_geom.geometry.triangles.index_count = index_count;
 		}
 
-		surf_data->blas = RD::get_singleton()->blas_create({ &as_geom, 1 }, RD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT);
-		if (!surf_data->blas.is_valid()) {
-			return surf_data;
+		BitField<RD::AccelerationStructureFlagBits> as_flags = p_prefer_fast_build
+				? RD::ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT
+				: RD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT;
+		if (p_allow_update) {
+			as_flags.set_flag(RD::ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT);
 		}
-		RD::get_singleton()->set_resource_name(surf_data->blas, String("RT BLAS [") + itos(cache_key) + "]");
-		r_dirty_blas_list.push_back(surf_data->blas);
+
+		r_surf_data->blas = RD::get_singleton()->blas_create({ &as_geom, 1 }, as_flags);
+		if (!r_surf_data->blas.is_valid()) {
+			return;
+		}
+		RD::get_singleton()->set_resource_name(r_surf_data->blas,
+				String(p_vertex_buffer_override.is_valid() ? "RT BLAS deformed [" : "RT BLAS [") + itos(p_cache_key) + "]");
+		r_dirty_blas_list.push_back(r_surf_data->blas);
 	}
-
-	// Update cache entry
-	entry->cached_counter = p_surface_invalidation_counter;
-	entry->cached_rid_version = mesh_version;
-	entry->last_used_frame = current_frame;
-
-	return surf_data;
 }
 
 // ---------------------------------------------------------------------------
@@ -1304,10 +1449,16 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 // Acceleration structure building
 // ---------------------------------------------------------------------------
 
-void RenderRaytracing::build_acceleration_structures(RTViewportState *p_state, const LocalVector<RID> &p_dirty_blas_list) {
+void RenderRaytracing::build_acceleration_structures(RTViewportState *p_state, const LocalVector<RID> &p_dirty_blas_list, const LocalVector<RID> &p_dirty_blas_update_list) {
 	for (const RID &blas_rid : p_dirty_blas_list) {
 		if (blas_rid.is_valid()) {
 			RD::get_singleton()->blas_build(blas_rid);
+		}
+	}
+
+	for (const RID &blas_rid : p_dirty_blas_update_list) {
+		if (blas_rid.is_valid()) {
+			RD::get_singleton()->blas_update(blas_rid);
 		}
 	}
 
@@ -1395,6 +1546,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 	LocalVector<RID> dirty_blas_list;
+	LocalVector<RID> dirty_blas_update_list;
 
 #ifdef TOOLS_ENABLED
 	uint32_t tlas_instance_count = 0;
@@ -1494,7 +1646,26 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 			void *mesh_surface = surf->surface;
 			uint32_t surface_counter = mesh_storage->mesh_surface_get_rt_invalidation_counter(mesh_surface);
 
-			RTSurfaceData *surf_data = process_surface(surf, mesh_surface, surface_counter, instance_transform, dirty_blas_list);
+			// MeshInstance skinning/blend shapes provide a deformed vertex buffer.
+			RTSurfaceData *surf_data = nullptr;
+			if (inst->mesh_instance.is_valid()) {
+				RID curr_vb = mesh_storage->mesh_instance_get_vertex_buffer(inst->mesh_instance, surf->surface_index);
+				if (curr_vb.is_valid()) {
+					RTDeformedGeometrySource src;
+					src.current_vb = curr_vb;
+					src.prev_vb = mesh_storage->mesh_instance_get_prev_vertex_buffer(inst->mesh_instance, surf->surface_index);
+					src.change_stamp = mesh_storage->mesh_instance_get_last_change(inst->mesh_instance, surf->surface_index);
+					uint64_t mi_id = inst->mesh_instance.get_id();
+					uint32_t mi_index = static_cast<uint32_t>(mi_id & 0xFFFFFFFFULL);
+					src.cache_version = static_cast<uint32_t>(mi_id >> 32);
+					src.cache_key = (static_cast<uint64_t>(mi_index) << 16) | (surf->surface_index & 0xFFFFu);
+					src.surface_counter = surface_counter;
+					surf_data = process_deformed_surface(surf, mesh_surface, src, dirty_blas_list, dirty_blas_update_list);
+				}
+			}
+			if (!surf_data) {
+				surf_data = process_surface(surf, mesh_surface, surface_counter, instance_transform, dirty_blas_list);
+			}
 			if (!surf_data || !surf_data->blas.is_valid()) {
 				surf = surf->next;
 				continue;
@@ -1612,7 +1783,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 
 	SceneShaderRaytracing::get_singleton()->finalize_custom_shaders();
 
-	build_acceleration_structures(state, dirty_blas_list);
+	build_acceleration_structures(state, dirty_blas_list, dirty_blas_update_list);
 	finalize_buffers(state);
 
 	return state;
