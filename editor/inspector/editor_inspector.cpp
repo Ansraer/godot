@@ -323,7 +323,6 @@ void EditorProperty::_notification(int p_what) {
 			}
 
 			AccessibilityServer::get_singleton()->update_set_name(ae, vformat(TTR("Property: %s"), label));
-			AccessibilityServer::get_singleton()->update_set_value(ae, vformat(TTR("Property: %s"), label));
 
 			AccessibilityServer::get_singleton()->update_set_popup_type(ae, AccessibilityServerEnums::AccessibilityPopupType::POPUP_MENU);
 			AccessibilityServer::get_singleton()->update_add_action(ae, AccessibilityServerEnums::AccessibilityAction::ACTION_SHOW_CONTEXT_MENU, callable_mp(this, &EditorProperty::_accessibility_action_menu));
@@ -1834,7 +1833,6 @@ void EditorInspectorCategory::_notification(int p_what) {
 			}
 
 			AccessibilityServer::get_singleton()->update_set_name(ae, vformat(TTR("Category: %s"), label));
-			AccessibilityServer::get_singleton()->update_set_value(ae, vformat(TTR("Category: %s"), label));
 
 			AccessibilityServer::get_singleton()->update_set_popup_type(ae, AccessibilityServerEnums::AccessibilityPopupType::POPUP_MENU);
 			AccessibilityServer::get_singleton()->update_add_action(ae, AccessibilityServerEnums::AccessibilityAction::ACTION_SHOW_CONTEXT_MENU, callable_mp(this, &EditorInspectorCategory::_accessibility_action_menu));
@@ -1997,10 +1995,6 @@ void EditorInspectorCategory::_handle_menu_option(int p_option) {
 }
 
 void EditorInspectorCategory::_popup_context_menu(const Point2i &p_position) {
-	if (!is_favorite && doc_class_name.is_empty()) {
-		return;
-	}
-
 	if (menu == nullptr) {
 		menu = memnew(PopupMenu);
 
@@ -2010,8 +2004,10 @@ void EditorInspectorCategory::_popup_context_menu(const Point2i &p_position) {
 			menu->add_icon_item(theme_cache.icon_copy, TTRC("Copy Category Values"), MENU_COPY_VALUE);
 			menu->add_icon_item(theme_cache.icon_paste, TTRC("Paste Category Values"), MENU_PASTE_VALUE);
 
-			menu->add_item(TTRC("Open Documentation"), MENU_OPEN_DOCS);
-			menu->set_item_disabled(-1, !EditorHelp::get_doc_data()->class_list.has(doc_class_name));
+			if (!doc_class_name.is_empty()) {
+				menu->add_item(TTRC("Open Documentation"), MENU_OPEN_DOCS);
+				menu->set_item_disabled(-1, !EditorHelp::get_doc_data()->class_list.has(doc_class_name));
+			}
 		}
 
 		menu->connect(SceneStringName(id_pressed), callable_mp(this, &EditorInspectorCategory::_handle_menu_option));
@@ -2025,7 +2021,7 @@ void EditorInspectorCategory::_popup_context_menu(const Point2i &p_position) {
 	if (menu_icon_dirty) {
 		if (is_favorite) {
 			menu->set_item_icon(menu->get_item_index(MENU_UNFAVORITE_ALL), theme_cache.icon_unfavorite);
-		} else {
+		} else if (!doc_class_name.is_empty()) {
 			menu->set_item_icon(menu->get_item_index(MENU_OPEN_DOCS), theme_cache.icon_help);
 		}
 		menu_icon_dirty = false;
@@ -2159,7 +2155,6 @@ void EditorInspectorSection::_notification(int p_what) {
 			}
 
 			AccessibilityServer::get_singleton()->update_set_name(ae, vformat(TTR("Section: %s"), label));
-			AccessibilityServer::get_singleton()->update_set_value(ae, vformat(TTR("Section: %s"), label));
 			AccessibilityServer::get_singleton()->update_add_action(ae, AccessibilityServerEnums::AccessibilityAction::ACTION_COLLAPSE, callable_mp(this, &EditorInspectorSection::_accessibility_action_collapse));
 			AccessibilityServer::get_singleton()->update_add_action(ae, AccessibilityServerEnums::AccessibilityAction::ACTION_EXPAND, callable_mp(this, &EditorInspectorSection::_accessibility_action_expand));
 		} break;
@@ -3530,7 +3525,6 @@ void ArrayPanelContainer::_notification(int p_what) {
 			AccessibilityServer::get_singleton()->update_set_role(ae, AccessibilityServerEnums::AccessibilityRole::ROLE_BUTTON);
 
 			AccessibilityServer::get_singleton()->update_set_name(ae, get_meta("text"));
-			AccessibilityServer::get_singleton()->update_set_value(ae, get_meta("text"));
 
 			AccessibilityServer::get_singleton()->update_set_popup_type(ae, AccessibilityServerEnums::AccessibilityPopupType::POPUP_MENU);
 			AccessibilityServer::get_singleton()->update_add_action(ae, AccessibilityServerEnums::AccessibilityAction::ACTION_SHOW_CONTEXT_MENU, callable_mp(this, &ArrayPanelContainer::_accessibility_action_menu));
@@ -3549,7 +3543,6 @@ void EditorInspectorArray::_notification(int p_what) {
 			ERR_FAIL_COND(ae.is_null());
 
 			AccessibilityServer::get_singleton()->update_set_name(ae, vformat(TTR("Array: %s"), get_label()));
-			AccessibilityServer::get_singleton()->update_set_value(ae, vformat(TTR("Array: %s"), get_label()));
 		} break;
 
 		case NOTIFICATION_THEME_CHANGED: {

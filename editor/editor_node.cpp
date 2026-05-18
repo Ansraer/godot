@@ -37,6 +37,7 @@
 #include "core/io/config_file.h"
 #include "core/io/file_access.h"
 #include "core/io/image.h"
+#include "core/io/missing_resource.h"
 #include "core/io/resource_importer.h"
 #include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
@@ -2137,7 +2138,7 @@ void EditorNode::_save_editor_states(const String &p_file, int p_idx) {
 		for (Node *selected_node : selection) {
 			selection_paths.push_back(scene->get_path_to(selected_node));
 		}
-		cf->set_value("editor_states", "selected_nodes", selection_paths);
+		cf->set_value("editor_states", "$selected_nodes", selection_paths);
 	} else {
 		md = editor_data.get_scene_editor_states_with_selection(p_idx);
 	}
@@ -4768,6 +4769,29 @@ void EditorNode::_set_current_scene_nocheck(int p_idx, bool p_ignore_state) {
 	}
 }
 
+void EditorNode::setup_built_in_resource(const Ref<Resource> &p_resource, const String &p_owner_path) {
+	String resource_class;
+	const Ref<MissingResource> &missing_resource = p_resource;
+	if (missing_resource.is_valid()) {
+		resource_class = missing_resource->get_original_class();
+	} else {
+		resource_class = p_resource->get_class();
+	}
+
+	String unique_id;
+	String final_path;
+	while (true) {
+		unique_id = resource_class + "_" + Resource::generate_scene_unique_id();
+		final_path = p_owner_path + "::" + unique_id;
+
+		if (!ResourceCache::has(final_path)) {
+			break;
+		}
+	}
+	p_resource->set_scene_unique_id(unique_id);
+	p_resource->set_path(final_path);
+}
+
 void EditorNode::setup_color_picker(ColorPicker *p_picker) {
 	p_picker->set_editor_settings(EditorSettings::get_singleton());
 	int default_color_mode = EditorSettings::get_singleton()->get_project_metadata("color_picker", "color_mode", EDITOR_GET("interface/inspector/default_color_picker_mode"));
@@ -6432,7 +6456,7 @@ void EditorNode::_load_open_scenes_from_config(Ref<ConfigFile> p_layout) {
 	const String current_scene = p_layout->get_value(EDITOR_NODE_CONFIG_SECTION, "current_scene", String());
 	for (int i = 0; i < editor_data.get_edited_scene_count(); i++) {
 		if (editor_data.get_scene_path(i) == current_scene) {
-			_set_current_scene_nocheck(i);
+			_set_current_scene_nocheck(i, true);
 			current_scene_found = true;
 			break;
 		}
