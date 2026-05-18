@@ -485,6 +485,17 @@ public:
 		return s->vertex_buffer;
 	}
 
+	_FORCE_INLINE_ uint32_t mesh_surface_get_position_stride(void *p_surface) const {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		if (s->format & RSE::ARRAY_FLAG_USE_2D_VERTICES) {
+			return sizeof(float) * 2;
+		} else if (s->format & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES) {
+			return sizeof(uint16_t) * 4;
+		} else {
+			return sizeof(float) * 3;
+		}
+	}
+
 	/// Get the per-mesh-instance skinned/blend-shape vertex buffer for the current frame.
 	/// Returns RID() when this surface is not deformed (caller should fall back to mesh_surface_get_vertex_buffer).
 	_FORCE_INLINE_ RID mesh_instance_get_vertex_buffer(RID p_mesh_instance, uint32_t p_surface_index) {
@@ -801,6 +812,33 @@ public:
 			return multimesh->visible_instances;
 		}
 		return multimesh->instances;
+	}
+
+	// Returns a pointer to the CPU-side transform buffer, syncing from GPU once if needed.
+	// Safe to call every frame; the readback only happens on the first call when data_cache is empty.
+	// Note: for MultiMeshes updated every frame via set_buffer(), data_cache may be stale after init.
+	_FORCE_INLINE_ const float *multimesh_get_local_data_ptr(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		if (!mm) {
+			return nullptr;
+		}
+		_multimesh_make_local(mm);
+		return mm->data_cache.is_empty() ? nullptr : mm->data_cache.ptr();
+	}
+
+	_FORCE_INLINE_ uint32_t multimesh_get_stride(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm ? mm->stride_cache : 0;
+	}
+
+	_FORCE_INLINE_ uint32_t multimesh_get_current_instance_offset(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm ? mm->motion_vectors_current_offset : 0;
+	}
+
+	_FORCE_INLINE_ RID multimesh_get_gpu_buffer(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm ? mm->buffer : RID();
 	}
 
 	_FORCE_INLINE_ RID multimesh_get_3d_uniform_set(RID p_multimesh, RID p_shader, uint32_t p_set) const {

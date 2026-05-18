@@ -3319,9 +3319,10 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 						uint32_t base_type = idata.flags & InstanceData::FLAG_BASE_TYPE_MASK;
 						if (base_type == RSE::INSTANCE_LIGHT) {
 							cull_result.rt_light_instances.push_back(RID::from_uint64(idata.instance_data_rid));
-						} else if (base_type == RSE::INSTANCE_MESH &&
+						} else if ((base_type == RSE::INSTANCE_MESH || base_type == RSE::INSTANCE_MULTIMESH) &&
 								!(idata.flags & InstanceData::FLAG_CAST_SHADOWS_ONLY)) {
 							cull_result.rt_geometry_instances.push_back(idata.instance_geometry);
+							mesh_visible = true; // For skinned/deformed meshes..
 						}
 					}
 				}

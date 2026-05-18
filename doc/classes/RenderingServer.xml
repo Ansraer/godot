@@ -5501,7 +5501,22 @@
 		<constant name="VIEWPORT_RENDER_INFO_DRAW_CALLS_IN_FRAME" value="2" enum="ViewportRenderInfo">
 			Number of draw calls during this frame.
 		</constant>
-		<constant name="VIEWPORT_RENDER_INFO_MAX" value="3" enum="ViewportRenderInfo">
+		<constant name="VIEWPORT_RENDER_INFO_RT_TLAS_INSTANCES" value="3" enum="ViewportRenderInfo">
+			Number of TLAS instances submitted this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_BLAS_BUILDS" value="4" enum="ViewportRenderInfo">
+			Number of full BLAS builds performed this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_BLAS_REFITS" value="5" enum="ViewportRenderInfo">
+			Number of BLAS refits (updates) performed this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_TRIANGLES_BUILT" value="6" enum="ViewportRenderInfo">
+			Total triangles processed by full BLAS builds this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_RT_TRIANGLES_REFIT" value="7" enum="ViewportRenderInfo">
+			Total triangles processed by BLAS refits this frame (ray tracing only).
+		</constant>
+		<constant name="VIEWPORT_RENDER_INFO_MAX" value="8" enum="ViewportRenderInfo">
 			Represents the size of the [enum ViewportRenderInfo] enum.
 		</constant>
 		<constant name="VIEWPORT_RENDER_INFO_TYPE_VISIBLE" value="0" enum="ViewportRenderInfoType">

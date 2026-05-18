@@ -641,7 +641,22 @@
 		<constant name="RENDER_INFO_DRAW_CALLS_IN_FRAME" value="2" enum="RenderInfo">
 			Amount of draw calls in frame.
 		</constant>
-		<constant name="RENDER_INFO_MAX" value="3" enum="RenderInfo">
+		<constant name="RENDER_INFO_RT_TLAS_INSTANCES" value="3" enum="RenderInfo">
+			Number of TLAS instances submitted this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_BLAS_BUILDS" value="4" enum="RenderInfo">
+			Number of full BLAS builds performed this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_BLAS_REFITS" value="5" enum="RenderInfo">
+			Number of BLAS refits performed this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_TRIANGLES_BUILT" value="6" enum="RenderInfo">
+			Total triangles processed by full BLAS builds this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_RT_TRIANGLES_REFIT" value="7" enum="RenderInfo">
+			Total triangles processed by BLAS refits this frame (ray tracing only).
+		</constant>
+		<constant name="RENDER_INFO_MAX" value="8" enum="RenderInfo">
 			Represents the size of the [enum RenderInfo] enum.
 		</constant>
 		<constant name="RENDER_INFO_TYPE_VISIBLE" value="0" enum="RenderInfoType">

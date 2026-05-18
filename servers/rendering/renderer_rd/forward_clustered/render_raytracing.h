@@ -36,6 +36,7 @@
 #include "core/templates/local_vector.h"
 #include "core/templates/vector.h"
 #include "servers/rendering/renderer_rd/bindless_block.h"
+#include "servers/rendering/renderer_rd/shaders/raytracing/multimesh_merge.glsl.gen.h"
 #include "servers/rendering/rendering_device.h"
 
 #define RB_TEX_RAYTRACING SNAME("raytracing")
@@ -226,6 +227,35 @@ struct RTCacheEntry {
 	uint64_t size_bytes = 0;
 };
 
+/// Cache entry for a per-(MultiMesh, surface) merged BLAS.
+/// All vertex data (positions, normals, tangents, UVs, colors) is fully baked per-instance
+/// so the hit shader uses the standard code path — no special per-instance lookups.
+struct RTMergedMMEntry {
+	// Merged vertex buffer: [float3 pos × N*V] + [packed TBN × N*V] (if mesh has normals).
+	// The BLAS reads only the position section; the hit shader reads TBN via normal_byte_offset.
+	RID merged_vtx_buffer;
+	uint32_t vtx_capacity_bytes = 0;
+
+	// Merged attribute buffer: [UV + color × N*V] replicated per instance.
+	RID merged_attr_buffer;
+	uint32_t attr_capacity_bytes = 0;
+
+	// Replicated index buffer: uint32 N*I entries (invalid if non-indexed).
+	RID replicated_idx_buffer;
+	uint32_t idx_capacity = 0;
+
+	RID merge_uniform_set;
+	RID last_mm_buffer;
+	RID last_src_attr_buffer;
+
+	RID blas;
+	uint32_t last_mm_count = 0;
+	uint32_t last_surface_counter = 0;
+	uint32_t last_used_frame = 0;
+	bool blas_built_once = false;
+	bool indexed = false; // selects MODE_INDEXED vs MODE_NON_INDEXED variant
+};
+
 struct RTMaterialCacheEntry {
 	RTMaterialData *ptr = nullptr;
 	uint32_t last_used_frame = 0;
@@ -278,6 +308,21 @@ class RenderRaytracing {
 	// Caching (chunked sparse caches indexed by RID low bits / 256).
 	Vector<RTCacheEntry *> surface_chunks;
 	Vector<RTMaterialCacheEntry *> material_chunks;
+
+	// Merged MultiMesh BLAS cache and compute shader.
+	struct MergeShader {
+		enum Mode {
+			MODE_NON_INDEXED = 0,
+			MODE_INDEXED = 1,
+			MODE_MAX,
+		};
+		MultimeshMergeShaderRD shader;
+		RID version;
+		RID version_shader[MODE_MAX];
+		RID pipeline[MODE_MAX];
+	} mm_merge_shader;
+	// Key: (mm_rid.get_local_index() << 8) | (surface_index & 0xFF)
+	HashMap<uint32_t, RTMergedMMEntry> merged_mm_cache;
 
 	// BLAS cache for surfaces driven by per-frame-deformed vertex buffers.
 	struct RTDeformedCacheEntry {
@@ -358,6 +403,17 @@ class RenderRaytracing {
 			RTSurfaceData *r_surf_data,
 			LocalVector<RID> &r_dirty_blas_list);
 	RTMaterialData *process_material(RID p_material_rid, uint16_t p_material_invalidation_counter);
+	bool _build_merged_mm_blas(
+			RID p_mm_rid,
+			RID p_mm_gpu_buffer,
+			void *p_mesh_surface,
+			uint32_t p_mm_count,
+			uint32_t p_surface_index,
+			uint32_t p_surface_counter,
+			RD::ComputeListID p_compute_list,
+			LocalVector<RID> &r_dirty_blas_list,
+			LocalVector<RID> &r_dirty_blas_update_list,
+			RTSurfaceData *r_surf_data);
 	void update_procedural_blas(RTProceduralState *p_state, LocalVector<RID> &r_dirty_blas_list);
 	void build_acceleration_structures(RTViewportState *p_state, const LocalVector<RID> &p_dirty_blas_list, const LocalVector<RID> &p_dirty_blas_update_list);
 	void finalize_buffers(RTViewportState *p_state);

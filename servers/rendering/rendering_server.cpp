@@ -2975,6 +2975,11 @@ void RenderingServer::_bind_methods() {
 	BIND_ENUM_CONSTANT(RSE::VIEWPORT_RENDER_INFO_OBJECTS_IN_FRAME);
 	BIND_ENUM_CONSTANT(RSE::VIEWPORT_RENDER_INFO_PRIMITIVES_IN_FRAME);
 	BIND_ENUM_CONSTANT(RSE::VIEWPORT_RENDER_INFO_DRAW_CALLS_IN_FRAME);
+	BIND_ENUM_CONSTANT(RSE::VIEWPORT_RENDER_INFO_RT_TLAS_INSTANCES);
+	BIND_ENUM_CONSTANT(RSE::VIEWPORT_RENDER_INFO_RT_BLAS_BUILDS);
+	BIND_ENUM_CONSTANT(RSE::VIEWPORT_RENDER_INFO_RT_BLAS_REFITS);
+	BIND_ENUM_CONSTANT(RSE::VIEWPORT_RENDER_INFO_RT_TRIANGLES_BUILT);
+	BIND_ENUM_CONSTANT(RSE::VIEWPORT_RENDER_INFO_RT_TRIANGLES_REFIT);
 	BIND_ENUM_CONSTANT(RSE::VIEWPORT_RENDER_INFO_MAX);
 
 	BIND_ENUM_CONSTANT(RSE::VIEWPORT_RENDER_INFO_TYPE_VISIBLE);
@@ -3811,6 +3816,10 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/limits/cluster_builder/max_clustered_elements", PROPERTY_HINT_RANGE, "32,8192,1"), 512);
 	GLOBAL_DEF("rendering/pathtracer/use_shader_execution_reordering", true);
 	GLOBAL_DEF("rendering/pathtracer/async_shader_compilation", true);
+	GLOBAL_DEF_RST("rendering/pathtracer/multimesh_cache_cpu_transforms", false);
+	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracer/deformed_mesh_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,3600,1"), 60);
+	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracer/multimesh_blas_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,18000,1"), 3600);
+	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracer/multimesh_merged_blas_max_triangles", PROPERTY_HINT_RANGE, "256,1048576,1"), 65536);
 
 	// OpenGL limits
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/limits/opengl/max_renderable_elements", PROPERTY_HINT_RANGE, "1024,65536,1"), 65536);

@@ -358,7 +358,7 @@ RID RenderingDevice::blas_create(Span<AccelerationStructureGeometry> p_geometrie
 
 					uint32_t index_stride = (index_buffer->format == INDEX_BUFFER_FORMAT_UINT32 ? sizeof(uint32_t) : sizeof(uint16_t));
 					ERR_FAIL_COND_V_MSG((t_in.index_offset + t_in.index_count * index_stride) > index_buffer->size, RID(), "The specified index offset and count are outside the range of the index buffer.");
-					ERR_FAIL_COND_V_MSG(index_buffer->max_index >= t_in.vertex_count, RID(), "The index buffer contains an index that is outside the specified vertex range.");
+					ERR_FAIL_COND_V_MSG(index_buffer->max_index != 0xFFFFFFFFu && index_buffer->max_index >= t_in.vertex_count, RID(), "The index buffer contains an index that is outside the specified vertex range.");
 
 					t_out.index_buffer = index_buffer->driver_id;
 					t_out.index_offset = t_in.index_offset;
@@ -4770,6 +4770,10 @@ RID RenderingDevice::uniform_set_create(const VectorView<RD::Uniform> &p_uniform
 					buffer = vertex_buffer_owner.get_or_null(buffer_id);
 
 					ERR_FAIL_COND_V_MSG(!(buffer->usage.has_flag(RDD::BUFFER_USAGE_STORAGE_BIT)), RID(), "Vertex buffer supplied (binding: " + itos(uniform.binding) + ") was not created with storage flag.");
+				} else if (index_buffer_owner.owns(buffer_id)) {
+					buffer = index_buffer_owner.get_or_null(buffer_id);
+
+					ERR_FAIL_COND_V_MSG(!(buffer->usage.has_flag(RDD::BUFFER_USAGE_STORAGE_BIT)), RID(), "Index buffer supplied (binding: " + itos(uniform.binding) + ") was not created with storage flag.");
 				}
 				ERR_FAIL_NULL_V_MSG(buffer, RID(), "Storage buffer supplied (binding: " + itos(uniform.binding) + ") is invalid.");
 

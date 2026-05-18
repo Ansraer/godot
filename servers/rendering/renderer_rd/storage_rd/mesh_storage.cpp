@@ -30,6 +30,7 @@
 
 #include "mesh_storage.h"
 
+#include "core/config/project_settings.h"
 #include "servers/rendering/renderer_viewport.h"
 #include "servers/rendering/rendering_server.h"
 #include "servers/rendering/rendering_server_types.h"
@@ -381,6 +382,7 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 	if (RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY)) {
 		buffer_flags.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
 		buffer_flags.set_flag(RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT);
+		buffer_flags.set_flag(RD::BUFFER_CREATION_AS_STORAGE_BIT);
 	}
 
 	if (new_surface.vertex_data.size()) {
@@ -1619,7 +1621,11 @@ void MeshStorage::_multimesh_allocate_data(RID p_multimesh, int p_instances, RSE
 
 	if (multimesh->instances) {
 		uint32_t buffer_size = multimesh->instances * multimesh->stride_cache * sizeof(float);
-		multimesh->buffer = RD::get_singleton()->storage_buffer_create(buffer_size);
+		BitField<RD::BufferCreationBits> mm_flags = 0;
+		if (RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY)) {
+			mm_flags.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+		}
+		multimesh->buffer = RD::get_singleton()->storage_buffer_create(buffer_size, {}, 0, mm_flags);
 	}
 
 	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH);
@@ -1642,7 +1648,11 @@ void MeshStorage::_multimesh_enable_motion_vectors(MultiMesh *multimesh) {
 
 	uint32_t buffer_size = multimesh->instances * multimesh->stride_cache * sizeof(float);
 	uint32_t new_buffer_size = buffer_size * 2;
-	RID new_buffer = RD::get_singleton()->storage_buffer_create(new_buffer_size);
+	BitField<RD::BufferCreationBits> mm_mv_flags = 0;
+	if (RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY)) {
+		mm_mv_flags.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+	}
+	RID new_buffer = RD::get_singleton()->storage_buffer_create(new_buffer_size, {}, 0, mm_mv_flags);
 
 	if (multimesh->buffer_set && multimesh->data_cache.is_empty()) {
 		// If the buffer was set but there's no data cached in the CPU, we copy the buffer directly on the GPU.
@@ -2157,6 +2167,27 @@ void MeshStorage::_multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_
 			RD::get_singleton()->buffer_update(multimesh->buffer, multimesh->motion_vectors_previous_offset * multimesh->stride_cache * sizeof(float), p_buffer.size() * sizeof(float), r);
 		}
 		multimesh->buffer_set = true;
+	}
+
+	// rendering/pathtracer/multimesh_cache_cpu_transforms: keep a CPU mirror of the
+	// transform buffer so the path tracer never needs a GPU->CPU readback.
+	// Trade-off: CPU memory usage doubles for every MultiMesh that calls set_buffer().
+	static const bool keep_cpu_cache = GLOBAL_GET("rendering/pathtracer/multimesh_cache_cpu_transforms");
+	if (keep_cpu_cache && multimesh->data_cache.size() == 0) {
+		// Initialise the data cache from the data we already have on CPU.
+		uint32_t cache_size = multimesh->instances * multimesh->stride_cache;
+		if (multimesh->motion_vectors_enabled) {
+			cache_size *= 2;
+		}
+		multimesh->data_cache.resize(cache_size);
+		memset(multimesh->data_cache.ptrw(), 0, cache_size * sizeof(float));
+		uint32_t region_count = Math::division_round_up((uint32_t)multimesh->instances, (uint32_t)MULTIMESH_DIRTY_REGION_SIZE);
+		multimesh->data_cache_dirty_regions = memnew_arr(bool, region_count);
+		memset(multimesh->data_cache_dirty_regions, 0, region_count * sizeof(bool));
+		multimesh->data_cache_dirty_region_count = 0;
+		multimesh->previous_data_cache_dirty_regions = memnew_arr(bool, region_count);
+		memset(multimesh->previous_data_cache_dirty_regions, 0, region_count * sizeof(bool));
+		multimesh->previous_data_cache_dirty_region_count = 0;
 	}
 
 	if (multimesh->data_cache.size()) {

@@ -3709,6 +3709,18 @@ void Node3DEditorViewport::_notification(int p_what) {
 				text += vformat(TTR("Primitives: %d"), viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_PRIMITIVES_IN_FRAME)) + "\n";
 				text += vformat(TTR("Draw Calls: %d"), viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_DRAW_CALLS_IN_FRAME));
 
+				int rt_tlas = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_TLAS_INSTANCES);
+				if (rt_tlas > 0) {
+					int rt_blas_builds = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_BLAS_BUILDS);
+					int rt_blas_refits = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_BLAS_REFITS);
+					int rt_tris_built = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_TRIANGLES_BUILT);
+					int rt_tris_refit = viewport->get_render_info(Viewport::RENDER_INFO_TYPE_VISIBLE, Viewport::RENDER_INFO_RT_TRIANGLES_REFIT);
+					text += "\n";
+					text += "\n" + vformat(TTR("RT TLAS Instances: %d"), rt_tlas) + "\n";
+					text += vformat(TTR("RT BLAS Builds: %d (%d tris)"), rt_blas_builds, rt_tris_built) + "\n";
+					text += vformat(TTR("RT BLAS Refits: %d (%d tris)"), rt_blas_refits, rt_tris_refit);
+				}
+
 				info_label->set_text(text);
 			}
 
