@@ -344,13 +344,13 @@ public:
 			return !uses_particle_trails && !writes_modelview_or_projection && !uses_vertex && !uses_position && !uses_discard && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && backface_culling && !uses_point_size && !uses_world_coordinates && !wireframe && !uses_z_clip_scale && !stencil_enabled;
 		}
 
-		virtual void set_code(const String &p_Code);
+		virtual void set_code(const String &p_Code) override;
 		virtual void set_code_rt(const String &p_code_rt) override;
 
-		virtual bool is_animated() const;
-		virtual bool casts_shadows() const;
-		virtual RenderingServerTypes::ShaderNativeSourceCode get_native_source_code() const;
-		virtual Pair<ShaderRD *, RID> get_native_shader_and_version() const;
+		virtual bool is_animated() const override;
+		virtual bool casts_shadows() const override;
+		virtual RenderingServerTypes::ShaderNativeSourceCode get_native_source_code() const override;
+		virtual Pair<ShaderRD *, RID> get_native_shader_and_version() const override;
 		uint16_t _get_shader_version(PipelineVersion p_pipeline_version, uint32_t p_color_pass_flags, bool p_ubershader) const;
 		RID _get_shader_variant(uint16_t p_shader_version) const;
 		void _clear_vertex_input_mask_cache();

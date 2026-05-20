@@ -271,13 +271,13 @@ private:
 
 	MultiMesh *multimesh_dirty_list = nullptr;
 
-	_FORCE_INLINE_ void _multimesh_make_local(MultiMesh *multimesh) const;
-	_FORCE_INLINE_ void _multimesh_enable_motion_vectors(MultiMesh *multimesh);
-	_FORCE_INLINE_ void _multimesh_update_motion_vectors_data_cache(MultiMesh *multimesh);
-	_FORCE_INLINE_ bool _multimesh_uses_motion_vectors(MultiMesh *multimesh);
-	_FORCE_INLINE_ void _multimesh_mark_dirty(MultiMesh *multimesh, int p_index, bool p_aabb);
-	_FORCE_INLINE_ void _multimesh_mark_all_dirty(MultiMesh *multimesh, bool p_data, bool p_aabb);
-	_FORCE_INLINE_ void _multimesh_re_create_aabb(MultiMesh *multimesh, const float *p_data, int p_instances);
+	void _multimesh_make_local(MultiMesh *multimesh) const;
+	void _multimesh_enable_motion_vectors(MultiMesh *multimesh);
+	void _multimesh_update_motion_vectors_data_cache(MultiMesh *multimesh);
+	bool _multimesh_uses_motion_vectors(MultiMesh *multimesh);
+	void _multimesh_mark_dirty(MultiMesh *multimesh, int p_index, bool p_aabb);
+	void _multimesh_mark_all_dirty(MultiMesh *multimesh, bool p_data, bool p_aabb);
+	void _multimesh_re_create_aabb(MultiMesh *multimesh, const float *p_data, int p_instances);
 
 	/* Skeleton */
 
