@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="Streamline" inherits="Object" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+<class name="Streamline" inherits="Object" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
 		Streamline interface.
 	</brief_description>
@@ -44,15 +44,18 @@
 			Whether Streamline reports that NVIDIA DLSS upscaling is supported.
 		</constant>
 		<constant name="STREAMLINE_CAPABILITY_DLSS_G" value="1" enum="StreamlineCapabilityType">
-			Whether Streamline reports that NVIDIA DLSS frame generation is supported.
+			Whether Streamline reports that NVIDIA DLSS Frame Generation is supported.
 		</constant>
-		<constant name="STREAMLINE_CAPABILITY_NIS" value="4" enum="StreamlineCapabilityType">
-			Whether Streamline reports that NVIDIA Image Scaling upscaling is supported.
+		<constant name="STREAMLINE_CAPABILITY_DLSS_RR" value="2" enum="StreamlineCapabilityType">
+			Whether Streamline reports that NVIDIA DLSS Ray Reconstruction is supported.
 		</constant>
-		<constant name="STREAMLINE_CAPABILITY_REFLEX" value="2" enum="StreamlineCapabilityType">
+		<constant name="STREAMLINE_CAPABILITY_NIS" value="5" enum="StreamlineCapabilityType">
+			Whether Streamline reports that NVIDIA Image Scaling is supported.
+		</constant>
+		<constant name="STREAMLINE_CAPABILITY_REFLEX" value="3" enum="StreamlineCapabilityType">
 			Whether Streamline reports that NVIDIA Reflex is supported.
 		</constant>
-		<constant name="STREAMLINE_CAPABILITY_PCL" value="3" enum="StreamlineCapabilityType">
+		<constant name="STREAMLINE_CAPABILITY_PCL" value="4" enum="StreamlineCapabilityType">
 			Whether Streamline reports that PCL metrics are supported.
 		</constant>
 	</constants>

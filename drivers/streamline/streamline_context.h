@@ -30,10 +30,9 @@
 
 #pragma once
 
-#include "streamline_data.h"
-#include "streamline_headers.h"
-
 #ifdef STREAMLINE_ENABLED
+#include "drivers/streamline/streamline_data.h"
+#include "drivers/streamline/streamline_headers.h"
 class StreamlineContext {
 public:
 	// Interposer
@@ -52,14 +51,14 @@ public:
 	PFun_slSetD3DDevice *slSetD3DDevice = nullptr;
 
 	// Reflex
-	sl::ReflexOptions reflex_options = {};
+	sl::ReflexOptions reflex_options;
 	bool reflex_options_dirty = true;
 	PFun_slReflexGetState *slReflexGetState = nullptr;
 	PFun_slReflexSetOptions *slReflexSetOptions = nullptr;
 	PFun_slReflexSleep *slReflexSleep = nullptr;
 
 	// PCL
-	sl::PCLOptions pcl_options = {};
+	sl::PCLOptions pcl_options;
 	bool pcl_options_dirty = true;
 	PFun_slPCLSetMarker *slPCLSetMarker = nullptr;
 	PFun_slPCLSetOptions *slPCLSetOptions = nullptr;

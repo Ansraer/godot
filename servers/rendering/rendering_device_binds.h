@@ -751,11 +751,11 @@ protected:
 // is decoupled from the C++ field name so nested union/discriminator layouts
 // can still expose a flat, stable GDScript API.
 #define RD_SETGET_SUB2(m_type, m_sub1, m_sub2, m_field, m_name) \
-	void set_##m_name(m_type p_##m_name) {                      \
-		base.m_sub1.m_sub2.m_field = p_##m_name;                \
-	}                                                           \
-	m_type get_##m_name() const {                               \
-		return base.m_sub1.m_sub2.m_field;                      \
+	void set_##m_name(m_type p_##m_name) { \
+		base.m_sub1.m_sub2.m_field = p_##m_name; \
+	} \
+	m_type get_##m_name() const { \
+		return base.m_sub1.m_sub2.m_field; \
 	}
 
 class RDAccelerationStructureGeometry : public RefCounted {
@@ -771,8 +771,8 @@ public:
 		TYPE_AABBS = RD::AccelerationStructureGeometry::TYPE_AABBS,
 	};
 
-	void set_type(Type p_type) { base.type = static_cast<RD::AccelerationStructureGeometry::Type>(p_type); }
-	Type get_type() const { return static_cast<Type>(base.type); }
+	void set_geometry_type(Type p_type) { base.type = static_cast<RD::AccelerationStructureGeometry::Type>(p_type); }
+	Type get_geometry_type() const { return static_cast<Type>(base.type); }
 
 	RD_SETGET(BitField<RD::AccelerationStructureGeometryFlagBits>, flags)
 
@@ -795,7 +795,7 @@ public:
 
 protected:
 	static void _bind_methods() {
-		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, type);
+		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, geometry_type);
 		RD_BIND(Variant::INT, RDAccelerationStructureGeometry, flags);
 
 		RD_BIND(Variant::RID, RDAccelerationStructureGeometry, vertex_buffer);

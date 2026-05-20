@@ -34,10 +34,10 @@ TEST_FORCE_LINK(test_concave_polygon_shape_3d)
 
 #ifndef PHYSICS_3D_DISABLED
 
-#include "core/object/worker_thread_pool.h"
-#include "modules/godot_physics_3d/godot_shape_3d.h"
 #include "scene/resources/3d/concave_polygon_shape_3d.h"
 #include "tests/signal_watcher.h"
+
+#include "modules/godot_physics_3d/godot_shape_3d.h"
 
 namespace TestConcavePolygonShape3D {
 
@@ -329,7 +329,7 @@ TEST_CASE("[GodotConcavePolygonShape3D] BVH intersect_segment: hit above each gr
 			int face_index;
 			bool hit = shape.intersect_segment(from, to, result, normal, face_index, false);
 			CHECK_MESSAGE(hit, "Expected hit above grid cell");
-			CHECK_MESSAGE(Math::is_equal_approx(result.y, 0.0f), "Hit point should be on y=0 plane");
+			CHECK_MESSAGE(Math::is_equal_approx(result.y, real_t(0)), "Hit point should be on y=0 plane");
 		}
 	}
 }
@@ -534,7 +534,7 @@ TEST_CASE("[GodotConcavePolygonShape3D] BVH async: query immediately after setup
 	bool hit = shape.intersect_segment(
 			Vector3(8, 2, 8), Vector3(8, -2, 8), result, normal, face_index, false);
 	CHECK(hit);
-	CHECK(Math::is_equal_approx(result.y, 0.0f));
+	CHECK(Math::is_equal_approx(result.y, real_t(0)));
 }
 
 TEST_CASE("[GodotConcavePolygonShape3D] BVH async: destructor while build in-flight") {
