@@ -2540,6 +2540,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			RD::get_singleton()->raytracing_list_bind_uniform_set(raytracing_list, bindless_set, 1);
 		}
 
+		// Make sure BDA referenced buffers are registered as dependencies, otherwise GPU hangs may occur, or render graph will not be able to order the dependencies correctly.
 		raytracing->register_raytracing_buffer_dependencies(raytracing_list);
 
 		// Raytracing dispatches at internal (pre-upscale) size because the RT

@@ -324,7 +324,6 @@ class RenderRaytracing {
 	friend class RenderForwardClustered;
 
 	RenderForwardClustered *owner = nullptr;
-
 	SceneShaderRaytracing *shader = nullptr;
 	BindlessBlock *bindless_block = nullptr;
 
@@ -346,16 +345,7 @@ class RenderRaytracing {
 		RID version_shader[MODE_MAX];
 		RID pipeline[MODE_MAX];
 	} mm_merge_shader;
-	// Skinned-surface BLAS pool. Producer-side caching: the handle lives on
-	// the per-(instance, surface) cache struct in the renderer, so the hot
-	// path is `get_or_null` -> O(1) array index with validator guard.
-	RID_Owner<RTDeformedCacheEntry> deformed_pool;
 
-	// Merged-MultiMesh BLAS pool. The producer (MultiMesh) lives in the
-	// storage layer, which we don't want coupled to RT internals. Instead a
-	// small side table indexed by `mm_rid.get_local_index()` parks the per-
-	// surface handles here. `mm_validator` detects RID local-index recycling
-	// so old slots are released proactively rather than waiting for TTL.
 	struct MMSurfaceHandles {
 		LocalVector<RID> per_surface; // Grown on demand; entry per touched surface index.
 		uint32_t mm_validator = 0; // High 32 bits of MM RID id at last access.
@@ -369,17 +359,13 @@ class RenderRaytracing {
 		}
 	};
 	LocalVector<MMSurfaceHandles> mm_handles;
-	RID_Owner<RTMergedMMEntry> merged_mm_pool;
 
-	// Per-frame "touched this frame" lists, used so the raytracing-list
-	// dependency registrar can walk only the slots that were updated, with
-	// zero filtering. Cleared at the top of `prepare_frame`, populated as
-	// `process_deformed_surface` / `_build_merged_mm_blas` access slots.
+	RID_Owner<RTDeformedCacheEntry> deformed_pool;
 	LocalVector<RID> deformed_active_this_frame;
+
+	RID_Owner<RTMergedMMEntry> merged_mm_pool;	
 	LocalVector<RID> merged_mm_active_this_frame;
 
-	// Resolve a producer-cached handle to its slot, allocating fresh on miss.
-	// Centralises the get_or_null/make_rid dance so call sites stay single-line.
 	RTDeformedCacheEntry *_access_deformed_slot(RID &r_handle);
 	RTMergedMMEntry *_access_merged_mm_slot(RID &r_handle);
 
@@ -389,9 +375,7 @@ class RenderRaytracing {
 	uint32_t cache_hits = 0;
 	uint32_t cache_misses = 0;
 
-	// Per-frame scratch arrays. Refilled per viewport's build_tlas; immediately
-	// consumed by build_acceleration_structures + finalize_buffers, so they
-	// don't need to be per-viewport.
+	// Per-frame scratch arrays.
 	LocalVector<RT_GeometryData> geometry_data;
 	LocalVector<RT_MaterialData> material_data;
 	LocalVector<int32_t> motion_indices; ///< Per-instance: index into motion_transforms[], or -1.
@@ -480,9 +464,6 @@ public:
 	void copy_output_texture(const RenderDataRD *p_render_data);
 	void free_viewport_state(RenderSceneBuffersRD *p_render_buffers);
 
-	// Register read dependencies on per-frame BDA-only buffers (owned deformed VBs
-	// and their prev-frame position copies) so the draw graph inserts the correct
-	// barriers between buffer_copy/blas_update writes and the trace_rays read.
 	void register_raytracing_buffer_dependencies(RD::RaytracingListID p_list);
 
 	SceneShaderRaytracing *get_shader() const { return shader; }
