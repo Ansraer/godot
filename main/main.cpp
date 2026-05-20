@@ -656,6 +656,7 @@ void Main::print_help(const char *p_binary) {
 	print_help_option("--profiling", "Enable profiling in the script debugger.\n");
 	print_help_option("--gpu-profile", "Show a GPU profile of the tasks that took the most time during frame rendering.\n");
 	print_help_option("--gpu-validation", "Enable graphics API validation layers for debugging.\n");
+	print_help_option("--raytracing-validation", "Enable NVIDIA ray tracing validation layer (Vulkan only, requires VK_NV_ray_tracing_validation).\n");
 #ifdef DEBUG_ENABLED
 	print_help_option("--gpu-abort", "Abort on graphics API usage errors (usually validation layer errors). May help see the problem if your system freezes.\n", CLI_OPTION_AVAILABILITY_TEMPLATE_DEBUG);
 #endif
@@ -1182,7 +1183,9 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 		if (arg == "--debug" ||
 				arg == "--verbose" ||
 				arg == "--disable-crash-handler" ||
-				arg == "--generate-spirv-debug-info") {
+				arg == "--generate-spirv-debug-info" ||
+				arg == "--gpu-validation" ||
+				arg == "--raytracing-validation") {
 			forwardable_cli_arguments[CLI_SCOPE_TOOL].push_back(arg);
 			forwardable_cli_arguments[CLI_SCOPE_PROJECT].push_back(arg);
 		}
@@ -1359,10 +1362,12 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 				OS::get_singleton()->print("Missing GPU index argument, aborting.\n");
 				goto error;
 			}
-		} else if (arg == "--gpu-validation") {
-			Engine::singleton->use_validation_layers = true;
+	} else if (arg == "--gpu-validation") {
+		Engine::singleton->use_validation_layers = true;
+	} else if (arg == "--raytracing-validation") {
+		Engine::singleton->use_raytracing_validation = true;
 #ifdef DEBUG_ENABLED
-		} else if (arg == "--gpu-abort") {
+	} else if (arg == "--gpu-abort") {
 			Engine::singleton->abort_on_gpu_errors = true;
 #endif
 		} else if (arg == "--generate-spirv-debug-info") {

@@ -603,6 +603,8 @@ private:
 		mutable Transform3D cached_final_transform;
 		mutable bool cached_final_transform_valid = false;
 
+		mutable RID rt_deformed_handle;
+
 		GeometryInstanceSurfaceDataCache *next = nullptr;
 		GeometryInstanceForwardClustered *owner = nullptr;
 		SelfList<GeometryInstanceSurfaceDataCache> compilation_dirty_element;

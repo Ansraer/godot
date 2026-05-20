@@ -120,9 +120,6 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (!p_state) {
 		return;
 	}
-	if (p_state->uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(p_state->uniform_set)) {
-		RD::get_singleton()->free_rid(p_state->uniform_set);
-	}
 	if (p_state->tlas.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->tlas);
 	}
@@ -241,8 +238,8 @@ uint64_t RenderRaytracing::mat_ubo_pool_get_address(uint32_t p_slot) const {
 // ---------------------------------------------------------------------------
 
 void RenderRaytracing::cleanup_caches() {
-	// Free all cached surface data. BLAS resources are NOT freed here because
-	// they are owned by the RD dependency chain.
+	// Static-surface BLASes are NOT freed here: they were created with the default
+	// lifetime and will be cascade-freed by RD when their source vertex buffer is freed.
 	for (uint32_t i = 0; i < surface_chunks.size(); i++) {
 		if (surface_chunks[i]) {
 			for (uint32_t j = 0; j < RT_CACHE_CHUNK_SIZE; j++) {
@@ -257,46 +254,65 @@ void RenderRaytracing::cleanup_caches() {
 	}
 	surface_chunks.clear();
 
-	for (KeyValue<uint64_t, RTDeformedCacheEntry> &kv : deformed_surface_cache) {
-		RTDeformedCacheEntry &e = kv.value;
-		if (e.ptr) {
-			if (e.ptr->blas.is_valid()) {
-				RD::get_singleton()->free_rid(e.ptr->blas);
-			}
-			memdelete(e.ptr);
-			e.ptr = nullptr;
-		}
-	}
-	deformed_surface_cache.clear();
+	RD *rd = RD::get_singleton();
 
-	for (KeyValue<uint32_t, RTMergedMMEntry> &kv : merged_mm_cache) {
-		RTMergedMMEntry &e = kv.value;
-		RD *rd = RD::get_singleton();
-		// Uniform set must be freed before its bound buffers.
-		// RD auto-frees a uniform set when any of its bound resources is freed,
-		// so freeing the buffer first would leave a stale RID here.
-		if (e.merge_uniform_set.is_valid()) {
-			rd->free_rid(e.merge_uniform_set);
-			e.merge_uniform_set = RID();
-		}
-		if (e.blas.is_valid()) {
-			rd->free_rid(e.blas);
-			e.blas = RID();
-		}
-		if (e.merged_vtx_buffer.is_valid()) {
-			rd->free_rid(e.merged_vtx_buffer);
-			e.merged_vtx_buffer = RID();
-		}
-		if (e.merged_attr_buffer.is_valid()) {
-			rd->free_rid(e.merged_attr_buffer);
-			e.merged_attr_buffer = RID();
-		}
-		if (e.replicated_idx_buffer.is_valid()) {
-			rd->free_rid(e.replicated_idx_buffer);
-			e.replicated_idx_buffer = RID();
+	// Free all cached deformed surface data.
+	{
+		LocalVector<RID> live = deformed_pool.get_owned_list();
+		for (uint32_t i = 0; i < live.size(); i++) {
+			RTDeformedCacheEntry *e = deformed_pool.get_or_null(live[i]);
+			if (!e) {
+				continue;
+			}
+			if (e->ptr) {
+				if (e->ptr->blas.is_valid()) {
+					rd->free_rid(e->ptr->blas);
+				}
+				memdelete(e->ptr);
+				e->ptr = nullptr;
+			}
+			if (e->owned_vb_full.is_valid()) {
+				rd->free_rid(e->owned_vb_full);
+				e->owned_vb_full = RID();
+			}
+			if (e->prev_pos_vb.is_valid()) {
+				rd->free_rid(e->prev_pos_vb);
+				e->prev_pos_vb = RID();
+			}
+			deformed_pool.free(live[i]);
 		}
 	}
-	merged_mm_cache.clear();
+
+	// Free all merged MultiMesh BLAS data.
+	{
+		LocalVector<RID> live = merged_mm_pool.get_owned_list();
+		for (uint32_t i = 0; i < live.size(); i++) {
+			RTMergedMMEntry *e = merged_mm_pool.get_or_null(live[i]);
+			if (!e) {
+				continue;
+			}
+			if (e->blas.is_valid()) {
+				rd->free_rid(e->blas);
+				e->blas = RID();
+			}
+			if (e->merged_vtx_buffer.is_valid()) {
+				rd->free_rid(e->merged_vtx_buffer);
+				e->merged_vtx_buffer = RID();
+			}
+			if (e->merged_attr_buffer.is_valid()) {
+				rd->free_rid(e->merged_attr_buffer);
+				e->merged_attr_buffer = RID();
+			}
+			if (e->replicated_idx_buffer.is_valid()) {
+				rd->free_rid(e->replicated_idx_buffer);
+				e->replicated_idx_buffer = RID();
+			}
+			merged_mm_pool.free(live[i]);
+		}
+	}
+	mm_handles.clear();
+	deformed_active_this_frame.clear();
+	merged_mm_active_this_frame.clear();
 
 	// Free all cached material data
 	for (uint32_t i = 0; i < material_chunks.size(); i++) {
@@ -387,6 +403,32 @@ uint32_t RenderRaytracing::allocate_material_slot() {
 }
 
 // ---------------------------------------------------------------------------
+// Slot-pool access helpers
+// ---------------------------------------------------------------------------
+
+RTDeformedCacheEntry *RenderRaytracing::_access_deformed_slot(RID &r_handle) {
+	RTDeformedCacheEntry *entry = deformed_pool.get_or_null(r_handle);
+	if (!entry) {
+		// Stale or never-allocated handle -> fresh slot. RID_Owner default-
+		// constructs the entry, so all members start at their cleared values.
+		r_handle = deformed_pool.make_rid();
+		entry = deformed_pool.get_or_null(r_handle);
+	}
+	deformed_active_this_frame.push_back(r_handle);
+	return entry;
+}
+
+RTMergedMMEntry *RenderRaytracing::_access_merged_mm_slot(RID &r_handle) {
+	RTMergedMMEntry *entry = merged_mm_pool.get_or_null(r_handle);
+	if (!entry) {
+		r_handle = merged_mm_pool.make_rid();
+		entry = merged_mm_pool.get_or_null(r_handle);
+	}
+	merged_mm_active_this_frame.push_back(r_handle);
+	return entry;
+}
+
+// ---------------------------------------------------------------------------
 // Per-frame preparation
 // ---------------------------------------------------------------------------
 
@@ -396,69 +438,82 @@ void RenderRaytracing::prepare_frame() {
 	blass.clear();
 	blas_transforms.clear();
 	instance_flags.clear();
+	instance_masks.clear();
 	sbt_offsets.clear();
 	geometry_data.clear();
 	material_data.clear();
 	motion_indices.clear();
 	motion_transforms.clear();
 
-	// Procedural BLAS/AABB lifetime is on the geometry instance.
+	// Per-frame "touched this frame" lists are cleared here and refilled by
+	// `_access_*_slot` during the build phase. Saves a hashmap walk in
+	// `register_raytracing_buffer_dependencies`.
+	deformed_active_this_frame.clear();
+	merged_mm_active_this_frame.clear();
+
+	const uint32_t current_frame = RSG::rasterizer->get_frame_number();
+	RD *rd = RD::get_singleton();
+
+	// TTL-evict stale deformed-surface entries.
 	{
 		static const uint32_t DEFORMED_CACHE_TTL = (uint32_t)GLOBAL_GET("rendering/pathtracer/deformed_mesh_cache_ttl_frames");
-		uint32_t current_frame = RSG::rasterizer->get_frame_number();
-		LocalVector<uint64_t> to_remove;
-		for (KeyValue<uint64_t, RTDeformedCacheEntry> &kv : deformed_surface_cache) {
-			RTDeformedCacheEntry &e = kv.value;
-			if (e.last_used_frame != 0 && current_frame - e.last_used_frame > DEFORMED_CACHE_TTL) {
-				if (e.ptr) {
-					if (e.ptr->blas.is_valid()) {
-						RD::get_singleton()->free_rid(e.ptr->blas);
-					}
-					memdelete(e.ptr);
-					e.ptr = nullptr;
-				}
-				to_remove.push_back(kv.key);
+		LocalVector<RID> live = deformed_pool.get_owned_list();
+		for (uint32_t i = 0; i < live.size(); i++) {
+			RTDeformedCacheEntry *e = deformed_pool.get_or_null(live[i]);
+			if (!e) {
+				continue;
 			}
-		}
-		for (uint64_t k : to_remove) {
-			deformed_surface_cache.erase(k);
+			if (e->last_used_frame == 0 || current_frame - e->last_used_frame <= DEFORMED_CACHE_TTL) {
+				continue;
+			}
+			if (e->ptr) {
+				if (e->ptr->blas.is_valid()) {
+					rd->free_rid(e->ptr->blas);
+				}
+				memdelete(e->ptr);
+				e->ptr = nullptr;
+			}
+			if (e->owned_vb_full.is_valid()) {
+				rd->free_rid(e->owned_vb_full);
+				e->owned_vb_full = RID();
+			}
+			if (e->prev_pos_vb.is_valid()) {
+				rd->free_rid(e->prev_pos_vb);
+				e->prev_pos_vb = RID();
+			}
+			deformed_pool.free(live[i]);
 		}
 	}
 
-	// Evict stale merged MultiMesh BLASes.
+	// TTL-evict stale merged-MultiMesh entries.
 	{
 		static const uint32_t MM_BLAS_CACHE_TTL = (uint32_t)GLOBAL_GET("rendering/pathtracer/multimesh_blas_cache_ttl_frames");
-		uint32_t current_frame = RSG::rasterizer->get_frame_number();
-		RD *rd = RD::get_singleton();
-		LocalVector<uint32_t> to_remove;
-		for (KeyValue<uint32_t, RTMergedMMEntry> &kv : merged_mm_cache) {
-			RTMergedMMEntry &e = kv.value;
-			if (e.last_used_frame != 0 && current_frame - e.last_used_frame > MM_BLAS_CACHE_TTL) {
-				if (e.merge_uniform_set.is_valid()) {
-					rd->free_rid(e.merge_uniform_set);
-					e.merge_uniform_set = RID();
-				}
-				if (e.blas.is_valid()) {
-					rd->free_rid(e.blas);
-					e.blas = RID();
-				}
-				if (e.merged_vtx_buffer.is_valid()) {
-					rd->free_rid(e.merged_vtx_buffer);
-					e.merged_vtx_buffer = RID();
-				}
-				if (e.merged_attr_buffer.is_valid()) {
-					rd->free_rid(e.merged_attr_buffer);
-					e.merged_attr_buffer = RID();
-				}
-				if (e.replicated_idx_buffer.is_valid()) {
-					rd->free_rid(e.replicated_idx_buffer);
-					e.replicated_idx_buffer = RID();
-				}
-				to_remove.push_back(kv.key);
+		LocalVector<RID> live = merged_mm_pool.get_owned_list();
+		for (uint32_t i = 0; i < live.size(); i++) {
+			RTMergedMMEntry *e = merged_mm_pool.get_or_null(live[i]);
+			if (!e) {
+				continue;
 			}
-		}
-		for (uint32_t k : to_remove) {
-			merged_mm_cache.erase(k);
+			if (e->last_used_frame == 0 || current_frame - e->last_used_frame <= MM_BLAS_CACHE_TTL) {
+				continue;
+			}
+			if (e->blas.is_valid()) {
+				rd->free_rid(e->blas);
+				e->blas = RID();
+			}
+			if (e->merged_vtx_buffer.is_valid()) {
+				rd->free_rid(e->merged_vtx_buffer);
+				e->merged_vtx_buffer = RID();
+			}
+			if (e->merged_attr_buffer.is_valid()) {
+				rd->free_rid(e->merged_attr_buffer);
+				e->merged_attr_buffer = RID();
+			}
+			if (e->replicated_idx_buffer.is_valid()) {
+				rd->free_rid(e->replicated_idx_buffer);
+				e->replicated_idx_buffer = RID();
+			}
+			merged_mm_pool.free(live[i]);
 		}
 	}
 
@@ -527,8 +582,11 @@ RTSurfaceData *RenderRaytracing::process_surface(
 	if (!entry->ptr) {
 		entry->ptr = memnew(RTSurfaceData);
 	} else if (entry->ptr->blas.is_valid()) {
-		// Free old BLAS before creating new one
-		RD::get_singleton()->free_rid(entry->ptr->blas);
+		if (entry->cached_rid_version == mesh_version) {
+			// Same mesh, surface data changed: BLAS is still live, free explicitly.
+			RD::get_singleton()->free_rid(entry->ptr->blas);
+		}
+		// Version mismatch: old mesh was deleted, BLAS already cascade-freed by RD.
 		entry->ptr->blas = RID();
 	}
 
@@ -566,83 +624,138 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 		return nullptr;
 	}
 
+	RD *rd = RD::get_singleton();
+	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+
+	// Compute the deformed VB layout. Skinning always produces uncompressed data,
+	// matching the layout assumed by `_fill_surface_geometry_data(force_uncompressed=true)`.
+	uint64_t fmt = mesh_storage->mesh_surface_get_format(p_mesh_surface);
+	uint32_t vertex_count = mesh_storage->mesh_surface_get_vertex_count(p_mesh_surface);
+	bool is_2d = fmt & RSE::ARRAY_FLAG_USE_2D_VERTICES;
+	bool has_n = fmt & RSE::ARRAY_FORMAT_NORMAL;
+	bool has_t = fmt & RSE::ARRAY_FORMAT_TANGENT;
+	uint32_t position_stride = is_2d ? (uint32_t)sizeof(float) * 2u : (uint32_t)sizeof(float) * 3u;
+	uint32_t tbn_section_per_vertex = has_n ? (has_t ? 8u : 4u) : 0u;
+	uint32_t per_vertex_bytes = position_stride + tbn_section_per_vertex;
+	uint32_t full_size = per_vertex_bytes * vertex_count;
+	uint32_t pos_size = position_stride * vertex_count;
+
+	if (vertex_count == 0 || full_size == 0) {
+		return nullptr;
+	}
+
 	uint32_t current_frame = RSG::rasterizer->get_frame_number();
 	uint64_t buffer_id = p_source.current_vb.get_id();
 
-	RTDeformedCacheEntry &entry = deformed_surface_cache[p_source.cache_key];
+	// Producer-side handle lookup: O(1) array index when the slot is live,
+	// O(1) allocate when it isn't. No hash, no string-keyed map.
+	RTDeformedCacheEntry *entry_ptr = _access_deformed_slot(surf->rt_deformed_handle);
+	ERR_FAIL_NULL_V(entry_ptr, nullptr);
+	RTDeformedCacheEntry &entry = *entry_ptr;
 
-	bool needs_refresh = !entry.ptr ||
+	bool layout_changed = entry.cached_vertex_count != vertex_count || entry.cached_full_size != full_size;
+	bool data_changed = layout_changed ||
+			entry.cached_change_stamp != p_source.change_stamp ||
+			entry.cached_buffer_id != buffer_id;
+	bool needs_full_rebuild = !entry.ptr || !entry.blas_built_once || layout_changed ||
 			entry.cached_key_version != p_source.cache_version ||
-			entry.cached_surface_counter != p_source.surface_counter ||
-			entry.cached_buffer_id != buffer_id ||
-			entry.cached_change_stamp != p_source.change_stamp;
+			entry.cached_surface_counter != p_source.surface_counter;
 
-	auto stamp_deformed_geometry = [&](RTSurfaceData *p_surf_data) {
-		if (!p_surf_data || !p_surf_data->blas.is_valid()) {
-			return;
-		}
-		p_surf_data->geometry.flags |= RT_GEOM_FLAG_DEFORMED;
-		uint64_t prev_addr = 0;
-		if (p_source.prev_vb.is_valid() && p_source.prev_vb != p_source.current_vb) {
-			prev_addr = RD::get_singleton()->buffer_get_device_address(p_source.prev_vb);
-		}
-		p_surf_data->geometry.prev_vertex_buffer_address_lo = static_cast<uint32_t>(prev_addr & 0xFFFFFFFFULL);
-		p_surf_data->geometry.prev_vertex_buffer_address_hi = static_cast<uint32_t>(prev_addr >> 32);
-	};
+	// owned_vb_full is consumed by BLAS build (vertex_buffer_owner lookup) AND read
+	// from the hit shader via BDA, so it must be a vertex buffer with device address
+	// + acceleration-structure-input usage. prev_pos_vb is BDA-only (storage suffices).
+	BitField<RD::BufferCreationBits> owned_full_flags = RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT |
+			RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT;
+	BitField<RD::BufferCreationBits> prev_flags = RD::BUFFER_CREATION_AS_STORAGE_BIT |
+			RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT;
 
-	if (!needs_refresh && entry.ptr->blas.is_valid()) {
+	// Reallocate owned storage if the surface grew. Free any BLAS depending on the
+	// old buffer first so the cascade-free chain is unambiguous.
+	if (entry.owned_vb_full_capacity < full_size) {
+		if (entry.ptr && entry.ptr->blas.is_valid()) {
+			rd->free_rid(entry.ptr->blas);
+			entry.ptr->blas = RID();
+			entry.blas_built_once = false;
+		}
+		if (entry.owned_vb_full.is_valid()) {
+			rd->free_rid(entry.owned_vb_full);
+		}
+		entry.owned_vb_full = rd->vertex_buffer_create(full_size, Span<uint8_t>(), owned_full_flags);
+		ERR_FAIL_COND_V(!entry.owned_vb_full.is_valid(), nullptr);
+		entry.owned_vb_full_capacity = full_size;
+		rd->set_resource_name(entry.owned_vb_full, "RT deformed owned VB [" + itos(p_source.cache_key) + "]");
+		entry.prev_pos_seeded = false;
+		needs_full_rebuild = true;
+	}
+	if (entry.prev_pos_vb_capacity < pos_size) {
+		if (entry.prev_pos_vb.is_valid()) {
+			rd->free_rid(entry.prev_pos_vb);
+		}
+		entry.prev_pos_vb = rd->storage_buffer_create(pos_size, Vector<uint8_t>(), 0, prev_flags);
+		ERR_FAIL_COND_V(!entry.prev_pos_vb.is_valid(), nullptr);
+		entry.prev_pos_vb_capacity = pos_size;
+		rd->set_resource_name(entry.prev_pos_vb, "RT deformed prev pos VB [" + itos(p_source.cache_key) + "]");
+		entry.prev_pos_seeded = false;
+	}
+
+	// Per-frame copies run exactly once per frame, even when the same surface is
+	// visible from multiple viewports. Otherwise prev_pos_vb would be overwritten
+	// with this frame's positions on the second viewport, zeroing motion vectors.
+	// last_used_frame doubles as the per-frame guard; it's bumped at the bottom.
+	const bool first_touch_this_frame = entry.last_used_frame != current_frame;
+	if (first_touch_this_frame) {
+		// Archive last frame's owned positions into prev_pos_vb, then refresh
+		// owned_vb_full from the engine's skinned VB.
+		if (entry.prev_pos_seeded) {
+			rd->buffer_copy(entry.owned_vb_full, entry.prev_pos_vb, 0, 0, pos_size);
+		}
+		if (data_changed || !entry.prev_pos_seeded) {
+			rd->buffer_copy(p_source.current_vb, entry.owned_vb_full, 0, 0, full_size);
+		}
+		if (!entry.prev_pos_seeded) {
+			// Seed prev = current so motion vectors are zero on the first frame.
+			rd->buffer_copy(entry.owned_vb_full, entry.prev_pos_vb, 0, 0, pos_size);
+			entry.prev_pos_seeded = true;
+		}
+	}
+
+	if (needs_full_rebuild) {
+		cache_misses++;
+		if (!entry.ptr) {
+			entry.ptr = memnew(RTSurfaceData);
+		}
+		if (entry.ptr->blas.is_valid()) {
+			rd->free_rid(entry.ptr->blas);
+			entry.ptr->blas = RID();
+		}
+		_populate_surface_blas(p_mesh_surface, entry.owned_vb_full, true, true, true,
+				static_cast<uint32_t>(p_source.cache_key), entry.ptr, r_dirty_blas_list);
+		entry.blas_built_once = entry.ptr->blas.is_valid();
+	} else if (data_changed) {
+		cache_misses++;
+		r_dirty_blas_update_list.push_back(entry.ptr->blas);
+	} else {
 		cache_hits++;
-		entry.last_used_frame = current_frame;
-		stamp_deformed_geometry(entry.ptr);
-		return entry.ptr;
 	}
 
-	cache_misses++;
-
-	// Refit when only the current deformed vertex buffer contents changed.
-	bool can_refit = entry.ptr && entry.ptr->blas.is_valid() && entry.blas_built_once &&
-			entry.cached_key_version == p_source.cache_version &&
-			entry.cached_surface_counter == p_source.surface_counter &&
-			entry.cached_buffer_id == buffer_id;
-
-	if (can_refit) {
-		RTSurfaceData *surf_data = entry.ptr;
-		r_dirty_blas_update_list.push_back(surf_data->blas);
-		surf->cached_final_transform_valid = false;
-		stamp_deformed_geometry(surf_data);
-		entry.cached_change_stamp = p_source.change_stamp;
-		entry.last_used_frame = current_frame;
-		return surf_data;
+	if (entry.ptr && entry.ptr->blas.is_valid()) {
+		entry.ptr->geometry.flags |= RT_GEOM_FLAG_DEFORMED;
+		uint64_t prev_addr = rd->buffer_get_device_address(entry.prev_pos_vb);
+		entry.ptr->geometry.prev_vertex_buffer_address_lo = static_cast<uint32_t>(prev_addr & 0xFFFFFFFFULL);
+		entry.ptr->geometry.prev_vertex_buffer_address_hi = static_cast<uint32_t>(prev_addr >> 32);
 	}
-
-	if (!entry.ptr) {
-		entry.ptr = memnew(RTSurfaceData);
-	} else if (entry.ptr->blas.is_valid()) {
-		RD::get_singleton()->free_rid(entry.ptr->blas);
-		entry.ptr->blas = RID();
-		entry.blas_built_once = false;
-	}
-
-	RTSurfaceData *surf_data = entry.ptr;
-
-	_populate_surface_blas(p_mesh_surface, p_source.current_vb, true, true, true, static_cast<uint32_t>(p_source.cache_key), surf_data, r_dirty_blas_list);
 
 	surf->cached_final_transform_valid = false;
 
-	if (!surf_data->blas.is_valid()) {
-		return surf_data;
-	}
-
-	stamp_deformed_geometry(surf_data);
-
-	entry.blas_built_once = true;
 	entry.cached_change_stamp = p_source.change_stamp;
 	entry.cached_key_version = p_source.cache_version;
 	entry.cached_surface_counter = p_source.surface_counter;
 	entry.cached_buffer_id = buffer_id;
+	entry.cached_vertex_count = vertex_count;
+	entry.cached_full_size = full_size;
 	entry.last_used_frame = current_frame;
 
-	return surf_data;
+	return entry.ptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -1576,6 +1689,8 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 // ---------------------------------------------------------------------------
 
 void RenderRaytracing::build_acceleration_structures(RTViewportState *p_state, const LocalVector<RID> &p_dirty_blas_list, const LocalVector<RID> &p_dirty_blas_update_list) {
+	RENDER_TIMESTAMP("BLAS Build");
+
 	for (const RID &blas_rid : p_dirty_blas_list) {
 		if (blas_rid.is_valid()) {
 			RD::get_singleton()->blas_build(blas_rid);
@@ -1587,6 +1702,8 @@ void RenderRaytracing::build_acceleration_structures(RTViewportState *p_state, c
 			RD::get_singleton()->blas_update(blas_rid);
 		}
 	}
+
+	RENDER_TIMESTAMP("TLAS Build");
 
 	uint32_t needed = MAX(blass.size(), (uint32_t)1);
 	if (!p_state->tlas.is_valid() || needed > p_state->tlas_max_instances) {
@@ -1606,6 +1723,7 @@ void RenderRaytracing::build_acceleration_structures(RTViewportState *p_state, c
 		inst.transform = blas_transforms[i];
 		inst.blas = blass[i];
 		inst.flags = BitField<RD::AccelerationStructureInstanceFlagBits>(instance_flags[i]);
+		inst.mask = (i < instance_masks.size()) ? instance_masks[i] : 0xFF;
 		uint32_t sbt_off = (i < sbt_offsets.size()) ? sbt_offsets[i] : 0;
 		inst.hit_sbt_range = RD::HitShaderBindingTableRange((1ULL << 32) | uint64_t(sbt_off));
 	}
@@ -1680,21 +1798,67 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		return false; // Too large; fall back to expanded TLAS.
 	}
 
-	uint32_t cache_key = (p_mm_rid.get_local_index() << 8) | (p_surface_index & 0xFF);
-	RTMergedMMEntry &entry = merged_mm_cache[cache_key];
+	// Side table -> pool: dense direct index keyed by RID local_index, with a
+	// validator stamp to detect RID local-index recycling for a different MM.
+	const uint32_t li = p_mm_rid.get_local_index();
+	const uint32_t mm_validator = static_cast<uint32_t>(p_mm_rid.get_id() >> 32);
+	if (li >= mm_handles.size()) {
+		mm_handles.resize(li + 1);
+	}
+	MMSurfaceHandles &mm_entry = mm_handles[li];
+	if (mm_entry.mm_validator != mm_validator) {
+		// Local index has been recycled (or first-ever access). Release any slots
+		// the previous owner left behind so we don't leak until TTL.
+		RD *rd_local = RD::get_singleton();
+		for (uint32_t s = 0; s < mm_entry.per_surface.size(); s++) {
+			RID &h = mm_entry.per_surface[s];
+			RTMergedMMEntry *old = merged_mm_pool.get_or_null(h);
+			if (!old) {
+				h = RID();
+				continue;
+			}
+			if (old->blas.is_valid()) {
+				rd_local->free_rid(old->blas);
+			}
+			if (old->merged_vtx_buffer.is_valid()) {
+				rd_local->free_rid(old->merged_vtx_buffer);
+			}
+			if (old->merged_attr_buffer.is_valid()) {
+				rd_local->free_rid(old->merged_attr_buffer);
+			}
+			if (old->replicated_idx_buffer.is_valid()) {
+				rd_local->free_rid(old->replicated_idx_buffer);
+			}
+			merged_mm_pool.free(h);
+			h = RID();
+		}
+		mm_entry.per_surface.clear();
+		mm_entry.mm_validator = mm_validator;
+	}
 
-	entry.last_used_frame = RSG::rasterizer->get_frame_number();
+	RTMergedMMEntry *entry_ptr = _access_merged_mm_slot(mm_entry.surface_handle(p_surface_index));
+	ERR_FAIL_NULL_V(entry_ptr, false);
+	RTMergedMMEntry &entry = *entry_ptr;
+	const uint32_t cache_key = (li << 8) | (p_surface_index & 0xFF); // Used only for resource naming below.
+
+	const uint32_t current_frame = RSG::rasterizer->get_frame_number();
+
+	// First viewport this frame does the merge dispatch + BLAS refit; later
+	// viewports referencing the same MultiMesh-surface reuse the result.
+	// `last_used_frame` doubles as the per-frame guard, so capture the gate
+	// BEFORE bumping it.
+	const bool first_touch_this_frame = entry.last_used_frame != current_frame;
+	entry.last_used_frame = current_frame;
+
+	// Detect whether instance transforms moved since our last bake. Without this
+	// we'd re-merge + refit every frame even for fully-static MultiMeshes, which
+	// is significant wasted compute for high-instance-count crowds/foliage.
+	const uint64_t mm_last_change = mesh_storage->multimesh_get_last_change(p_mm_rid);
+	const bool transforms_changed = (entry.cached_mm_last_change != mm_last_change);
 
 	bool structure_changed = (entry.last_mm_count != p_mm_count ||
 			entry.last_surface_counter != p_surface_counter);
 
-	// Switching variants (e.g. mesh switched indexed-ness) requires a new
-	// descriptor set since the shader layout differs (binding 4 only exists
-	// for MODE_INDEXED).
-	if (entry.merge_uniform_set.is_valid() && entry.indexed != indexed) {
-		RD::get_singleton()->free_rid(entry.merge_uniform_set);
-		entry.merge_uniform_set = RID();
-	}
 	entry.indexed = indexed;
 
 	if (structure_changed) {
@@ -1702,10 +1866,6 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		if (entry.blas.is_valid()) {
 			rd->free_rid(entry.blas);
 			entry.blas = RID();
-		}
-		if (entry.merge_uniform_set.is_valid()) {
-			rd->free_rid(entry.merge_uniform_set);
-			entry.merge_uniform_set = RID();
 		}
 		entry.blas_built_once = false;
 		entry.last_mm_count = p_mm_count;
@@ -1750,10 +1910,6 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			rd->free_rid(entry.merged_vtx_buffer);
 			entry.merged_vtx_buffer = RID();
 		}
-		if (entry.merge_uniform_set.is_valid()) {
-			rd->free_rid(entry.merge_uniform_set);
-			entry.merge_uniform_set = RID();
-		}
 		entry.vtx_capacity_bytes = merged_vtx_bytes;
 		entry.merged_vtx_buffer = rd->vertex_buffer_create(merged_vtx_bytes, {}, gpu_buf_flags);
 		ERR_FAIL_COND_V(!entry.merged_vtx_buffer.is_valid(), false);
@@ -1766,10 +1922,6 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		if (entry.merged_attr_buffer.is_valid()) {
 			rd->free_rid(entry.merged_attr_buffer);
 			entry.merged_attr_buffer = RID();
-		}
-		if (entry.merge_uniform_set.is_valid()) {
-			rd->free_rid(entry.merge_uniform_set);
-			entry.merge_uniform_set = RID();
 		}
 		entry.attr_capacity_bytes = merged_attr_bytes;
 		entry.merged_attr_buffer = rd->storage_buffer_create(merged_attr_bytes, {}, 0, gpu_buf_flags);
@@ -1784,10 +1936,6 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			if (entry.replicated_idx_buffer.is_valid()) {
 				rd->free_rid(entry.replicated_idx_buffer);
 				entry.replicated_idx_buffer = RID();
-			}
-			if (entry.merge_uniform_set.is_valid()) {
-				rd->free_rid(entry.merge_uniform_set);
-				entry.merge_uniform_set = RID();
 			}
 			entry.idx_capacity = needed_idx;
 			entry.replicated_idx_buffer = rd->index_buffer_create(
@@ -1806,44 +1954,46 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		src_attr_buf = entry.merged_attr_buffer;
 	}
 
-	if (entry.merge_uniform_set.is_valid() &&
-			(entry.last_mm_buffer != p_mm_gpu_buffer ||
-					entry.last_src_attr_buffer != src_attr_buf)) {
-		rd->free_rid(entry.merge_uniform_set);
-		entry.merge_uniform_set = RID();
-	}
-
-	// --- (Re)build the merge descriptor set ---
-	if (!entry.merge_uniform_set.is_valid()) {
-		Vector<RD::Uniform> uniforms;
-		auto push_buf = [&](uint32_t binding, RID buf) {
-			RD::Uniform u;
-			u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-			u.binding = binding;
-			u.append_id(buf);
-			uniforms.push_back(u);
-		};
-		push_buf(0, entry.merged_vtx_buffer);
-		push_buf(1, p_mm_gpu_buffer);
-		push_buf(2, entry.merged_attr_buffer);
-		push_buf(3, src_attr_buf);
-		if (indexed) {
-			push_buf(4, entry.replicated_idx_buffer);
-		}
-		MergeShader::Mode mode = indexed ? MergeShader::MODE_INDEXED : MergeShader::MODE_NON_INDEXED;
-		entry.merge_uniform_set = rd->uniform_set_create(uniforms, mm_merge_shader.version_shader[mode], 0);
-		ERR_FAIL_COND_V(!entry.merge_uniform_set.is_valid(), false);
-		entry.last_mm_buffer = p_mm_gpu_buffer;
-		entry.last_src_attr_buffer = src_attr_buf;
-	}
+	MergeShader::Mode merge_mode = indexed ? MergeShader::MODE_INDEXED : MergeShader::MODE_NON_INDEXED;
 
 	// Pre-validate source vertex buffer before opening the compute list.
 	RID vtx_buf = mesh_storage->mesh_surface_get_vertex_buffer(p_mesh_surface);
 	ERR_FAIL_COND_V(!vtx_buf.is_valid(), false);
 	uint64_t vtx_bda = rd->buffer_get_device_address(vtx_buf);
 
+	// Re-bake when this is the first viewport this frame AND something about
+	// the source actually changed: instance transforms, instance count, or the
+	// underlying mesh surface. Otherwise the previous frame's merged buffer +
+	// BLAS are still valid and we skip both the compute pass and the refit.
+	const bool needs_rebake = first_touch_this_frame &&
+			(transforms_changed || !entry.blas_built_once);
+
 	// --- Single merged dispatch: bake vertices + TBN + attributes + (optional) indices ---
-	{
+	if (needs_rebake) {
+		// Ephemeral uniform set: descriptor set comes from the per-frame linear
+		// pool (vkResetDescriptorPool reclaims it at frame end), and we drop the
+		// RID immediately after recording the dispatch. Persistent caching is a
+		// trap because the bound buffers (mm_gpu_buffer, src_attr_buf) are owned
+		// by mesh storage and may be cascade-freed under us.
+		Vector<RD::Uniform> uniforms;
+		{
+			auto push_buf = [&](uint32_t binding, RID buf) {
+				RD::Uniform u;
+				u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				u.binding = binding;
+				u.append_id(buf);
+				uniforms.push_back(u);
+			};
+			push_buf(0, entry.merged_vtx_buffer);
+			push_buf(1, p_mm_gpu_buffer);
+			push_buf(2, entry.merged_attr_buffer);
+			push_buf(3, src_attr_buf);
+			if (indexed) {
+				push_buf(4, entry.replicated_idx_buffer);
+			}
+		}
+		RID merge_uniform_set = rd->uniform_set_create(uniforms, mm_merge_shader.version_shader[merge_mode], 0, /*p_linear_pool=*/true);
+		ERR_FAIL_COND_V(!merge_uniform_set.is_valid(), false);
 		uint32_t mm_stride = mesh_storage->multimesh_get_stride(p_mm_rid);
 		uint32_t mm_cur_offset = mesh_storage->multimesh_get_current_instance_offset(p_mm_rid);
 		uint32_t tbn_stride_words = tbn_stride / 4;
@@ -1890,7 +2040,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 
 		MergeShader::Mode mode = indexed ? MergeShader::MODE_INDEXED : MergeShader::MODE_NON_INDEXED;
 		rd->compute_list_bind_compute_pipeline(p_compute_list, mm_merge_shader.pipeline[mode]);
-		rd->compute_list_bind_uniform_set(p_compute_list, entry.merge_uniform_set, 0);
+		rd->compute_list_bind_uniform_set(p_compute_list, merge_uniform_set, 0);
 		if (indexed) {
 			rd->compute_list_set_push_constant(p_compute_list, &pc, sizeof(MergePC));
 		} else {
@@ -1930,6 +2080,10 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			thread_count = MAX(thread_count, p_mm_count * index_count);
 		}
 		rd->compute_list_dispatch_threads(p_compute_list, thread_count, 1, 1);
+
+		// Drop the RID now that the dispatch is recorded; the underlying Vulkan
+		// descriptor set lives in the linear pool until frame end.
+		rd->free_rid(merge_uniform_set);
 	}
 
 	// --- Build or refit the merged BLAS (uses merged_vtx_buffer for positions) ---
@@ -1954,11 +2108,17 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		rd->set_resource_name(entry.blas, "RT MM merged BLAS [" + itos(cache_key) + "]");
 	}
 
-	if (!entry.blas_built_once) {
-		r_dirty_blas_list.push_back(entry.blas);
-		entry.blas_built_once = true;
-	} else {
-		r_dirty_blas_update_list.push_back(entry.blas);
+	// Schedule the build/refit only when we actually rebaked above. Subsequent
+	// viewports (or unchanged frames) consume the BLAS as-is; the draw graph
+	// orders their TLAS reads after the BLAS write that already got queued.
+	if (needs_rebake) {
+		if (!entry.blas_built_once) {
+			r_dirty_blas_list.push_back(entry.blas);
+			entry.blas_built_once = true;
+		} else {
+			r_dirty_blas_update_list.push_back(entry.blas);
+		}
+		entry.cached_mm_last_change = mm_last_change;
 	}
 
 	// --- Populate r_surf_data from the metadata already computed above, then override merged buffer addresses.
@@ -2150,6 +2310,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 				uint32_t inst_flags = RD::ACCELERATION_STRUCTURE_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT |
 						RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_OPAQUE_BIT;
 				instance_flags.push_back(inst_flags);
+				instance_masks.push_back(0xFF);
 			}
 			continue;
 		}
@@ -2406,6 +2567,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 				}
 			}
 			instance_flags.push_back(inst_flags);
+			instance_masks.push_back(0xFF);
 
 			surf = surf->next;
 		}
@@ -2435,6 +2597,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 			material_data.push_back(pending.mat_data->data);
 			motion_indices.push_back(-1);
 			instance_flags.push_back(pending.inst_flags);
+			instance_masks.push_back(0xFF);
 #ifdef TOOLS_ENABLED
 			if (collect_render_info) {
 				tlas_instance_count++;
@@ -2506,6 +2669,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 				}
 
 				instance_flags.push_back(pending.inst_flags);
+				instance_masks.push_back(0xFF);
 			}
 
 #ifdef TOOLS_ENABLED
@@ -2725,11 +2889,6 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, RT_L
 
 RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderDataRD *p_render_data, uint32_t p_rt_flags) {
 	ERR_FAIL_NULL_V(p_state, RID());
-
-	if (p_state->uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(p_state->uniform_set)) {
-		RD::get_singleton()->free_rid(p_state->uniform_set);
-		p_state->uniform_set = RID();
-	}
 
 	// BindlessBlock handles its own uniform set cleanup via clear()
 
@@ -3017,12 +3176,13 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 	// Use the pipeline-side shader so UniformSetFormat matches at bind time.
 	RID shader_rd = shader ? shader->get_pipeline_shader_rd(p_rt_flags) : RID();
 
+	RID result;
 	if (shader_rd.is_valid()) {
-		p_state->uniform_set = RD::get_singleton()->uniform_set_create(
+		result = RD::get_singleton()->uniform_set_create(
 				uniforms,
 				shader_rd,
-				RenderForwardClustered::SCENE_UNIFORM_SET);
-		RD::get_singleton()->set_resource_name(p_state->uniform_set, "RT Uniform Set");
+				RenderForwardClustered::SCENE_UNIFORM_SET,
+				/*p_linear_pool=*/true);
 
 		// === SET 1: Bindless textures ===
 		if (bindless_block && bindless_block->is_initialized()) {
@@ -3031,7 +3191,58 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		}
 	}
 
-	return p_state->uniform_set;
+	return result;
+}
+
+// ---------------------------------------------------------------------------
+// Trace-time buffer dependencies
+// ---------------------------------------------------------------------------
+
+void RenderRaytracing::register_raytracing_buffer_dependencies(RD::RaytracingListID p_list) {
+	RD *rd = RD::get_singleton();
+
+	// The hit shader reads vertex / attribute / index data via BDA stored in
+	// RT_GeometryData. The draw graph cannot infer those reads from the BDA, so
+	// every per-frame-written buffer that the trace will touch via BDA must be
+	// declared here -- otherwise the producing copy/dispatch may not be visible
+	// to the trace. (Static mesh VB/AB/IB are uploaded once via the transfer
+	// worker and don't need per-frame barriers.)
+
+	// Mat UBO pool buffer dependency.
+	if (mat_ubo_pool_buffer.is_valid()) {
+		rd->raytracing_list_add_buffer_dependency(p_list, mat_ubo_pool_buffer, /*p_writable=*/false);
+	}
+
+	// Deformed surface buffer dependencies.
+	for (uint32_t i = 0; i < deformed_active_this_frame.size(); i++) {
+		RTDeformedCacheEntry *e = deformed_pool.get_or_null(deformed_active_this_frame[i]);
+		if (!e) {
+			continue;
+		}
+		if (e->owned_vb_full.is_valid()) {
+			rd->raytracing_list_add_buffer_dependency(p_list, e->owned_vb_full, /*p_writable=*/false);
+		}
+		if (e->prev_pos_vb.is_valid()) {
+			rd->raytracing_list_add_buffer_dependency(p_list, e->prev_pos_vb, /*p_writable=*/false);
+		}
+	}
+
+	// Merged MultiMesh buffer dependencies.
+	for (uint32_t i = 0; i < merged_mm_active_this_frame.size(); i++) {
+		RTMergedMMEntry *e = merged_mm_pool.get_or_null(merged_mm_active_this_frame[i]);
+		if (!e) {
+			continue;
+		}
+		if (e->merged_vtx_buffer.is_valid()) {
+			rd->raytracing_list_add_buffer_dependency(p_list, e->merged_vtx_buffer, /*p_writable=*/false);
+		}
+		if (e->merged_attr_buffer.is_valid()) {
+			rd->raytracing_list_add_buffer_dependency(p_list, e->merged_attr_buffer, /*p_writable=*/false);
+		}
+		if (e->replicated_idx_buffer.is_valid()) {
+			rd->raytracing_list_add_buffer_dependency(p_list, e->replicated_idx_buffer, /*p_writable=*/false);
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

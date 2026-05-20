@@ -836,6 +836,11 @@ public:
 		return mm ? mm->motion_vectors_current_offset : 0;
 	}
 
+	_FORCE_INLINE_ uint64_t multimesh_get_last_change(RID p_multimesh) const {
+		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
+		return mm ? mm->motion_vectors_last_change : (uint64_t)-1;
+	}
+
 	_FORCE_INLINE_ RID multimesh_get_gpu_buffer(RID p_multimesh) const {
 		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
 		return mm ? mm->buffer : RID();

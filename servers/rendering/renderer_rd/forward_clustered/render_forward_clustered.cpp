@@ -2110,6 +2110,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	// consumers see a consistent transform_status this frame.
 	_age_out_motion_vectors(p_render_data);
 
+	RENDER_TIMESTAMP("Fill Render Lists");
+
 	// With RT on we skip OPAQUE (TLAS is built from rt_instances) and
 	// using_motion_pass is off (RT writes velocity itself), so the last arg
 	// collapses the side-effect population to ALPHA only.
@@ -2140,8 +2142,11 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	// below can bind without RenderRaytracing keeping hidden "current" state.
 	RID rt_uniform_set;
 
+
+
 	// Create TLAS for raytracing if enabled
 	if (scene_features.rt && rb_data.is_valid() && raytracing && raytracing->get_shader()) {
+		RENDER_TIMESTAMP("Build Acceleration Structures");
 		const float *env_params = (p_render_data && p_render_data->environment.is_valid())
 				? RendererEnvironmentStorage::get_singleton()->environment_get_pathtracing_params_ptr(p_render_data->environment)
 				: nullptr;
@@ -2535,14 +2540,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			RD::get_singleton()->raytracing_list_bind_uniform_set(raytracing_list, bindless_set, 1);
 		}
 
-		// Critical: Mat UBO pool buffer dependency for correctness.
-		// TODO: Materials larger than 512 bytes are currently not taken into account. This can be very bad. (they produce a warning whenever they are used)
-		//       Better to avoid >512 bytes per material anyway, but this could cause GPU hangs in case that path is taken.
-		//       So either we support that properly (keep a running tally of which ones are referenced), or we drop support for these.
-		RID mat_ubo_pool = raytracing->get_mat_ubo_pool_buffer();
-		if (mat_ubo_pool.is_valid()) {
-			RD::get_singleton()->raytracing_list_add_buffer_dependency(raytracing_list, mat_ubo_pool, /*p_writable=*/false);
-		}
+		raytracing->register_raytracing_buffer_dependencies(raytracing_list);
 
 		// Raytracing dispatches at internal (pre-upscale) size because the RT
 		// output texture is allocated at that resolution; FSR/upscaler runs

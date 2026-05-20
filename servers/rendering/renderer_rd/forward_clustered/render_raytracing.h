@@ -34,6 +34,7 @@
 #include "core/string/string_name.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
+#include "core/templates/rid_owner.h"
 #include "core/templates/vector.h"
 #include "servers/rendering/renderer_rd/bindless_block.h"
 #include "servers/rendering/renderer_rd/shaders/raytracing/multimesh_merge.glsl.gen.h"
@@ -227,6 +228,35 @@ struct RTCacheEntry {
 	uint64_t size_bytes = 0;
 };
 
+/// BLAS cache entry for a surface driven by a per-frame-deformed vertex buffer.
+///
+/// The skinned vertex buffer is owned by the engine's MeshInstance system and may
+/// be freed/reallocated outside our control. To decouple BLAS lifetime from that
+/// (and keep last-frame positions alive for motion vectors) we copy the skinned VB
+/// into our own buffers each frame:
+///   * owned_vb_full mirrors the skinned VB layout (positions + N + T) and is what
+///     the BLAS and the hit shader read from this frame.
+///   * prev_pos_vb stores the previous-frame positions only (float3 packed) for the
+///     motion-vector path. Updated from owned_vb_full's position section each frame
+///     before owned_vb_full is overwritten with the new skinned data.
+struct RTDeformedCacheEntry {
+	RTSurfaceData *ptr = nullptr;
+	uint32_t last_used_frame = 0;
+	uint64_t cached_change_stamp = 0;
+	uint32_t cached_key_version = 0;
+	uint32_t cached_surface_counter = 0;
+	uint64_t cached_buffer_id = 0; // RID id of the deformed vertex buffer at the time of build.
+	bool blas_built_once = false; // True once the BLAS has been fully built; subsequent ticks can refit.
+
+	RID owned_vb_full;
+	uint32_t owned_vb_full_capacity = 0; // Bytes; grow-only.
+	RID prev_pos_vb;
+	uint32_t prev_pos_vb_capacity = 0; // Bytes; grow-only.
+	uint32_t cached_vertex_count = 0;
+	uint32_t cached_full_size = 0;
+	bool prev_pos_seeded = false; // False until the first owned->prev copy has run.
+};
+
 /// Cache entry for a per-(MultiMesh, surface) merged BLAS.
 /// All vertex data (positions, normals, tangents, UVs, colors) is fully baked per-instance
 /// so the hit shader uses the standard code path — no special per-instance lookups.
@@ -244,14 +274,11 @@ struct RTMergedMMEntry {
 	RID replicated_idx_buffer;
 	uint32_t idx_capacity = 0;
 
-	RID merge_uniform_set;
-	RID last_mm_buffer;
-	RID last_src_attr_buffer;
-
 	RID blas;
 	uint32_t last_mm_count = 0;
 	uint32_t last_surface_counter = 0;
 	uint32_t last_used_frame = 0;
+	uint64_t cached_mm_last_change = 0;
 	bool blas_built_once = false;
 	bool indexed = false; // selects MODE_INDEXED vs MODE_NON_INDEXED variant
 };
@@ -290,8 +317,6 @@ struct RTViewportState {
 	RID light_buffer;
 	RID params_buffer;
 
-	RID uniform_set;
-
 	uint32_t frame_counter = 0;
 };
 
@@ -321,20 +346,43 @@ class RenderRaytracing {
 		RID version_shader[MODE_MAX];
 		RID pipeline[MODE_MAX];
 	} mm_merge_shader;
-	// Key: (mm_rid.get_local_index() << 8) | (surface_index & 0xFF)
-	HashMap<uint32_t, RTMergedMMEntry> merged_mm_cache;
+	// Skinned-surface BLAS pool. Producer-side caching: the handle lives on
+	// the per-(instance, surface) cache struct in the renderer, so the hot
+	// path is `get_or_null` -> O(1) array index with validator guard.
+	RID_Owner<RTDeformedCacheEntry> deformed_pool;
 
-	// BLAS cache for surfaces driven by per-frame-deformed vertex buffers.
-	struct RTDeformedCacheEntry {
-		RTSurfaceData *ptr = nullptr;
-		uint32_t last_used_frame = 0;
-		uint64_t cached_change_stamp = 0;
-		uint32_t cached_key_version = 0;
-		uint32_t cached_surface_counter = 0;
-		uint64_t cached_buffer_id = 0; // RID id of the deformed vertex buffer at the time of build.
-		bool blas_built_once = false; // True once the BLAS has been fully built; subsequent ticks can refit.
+	// Merged-MultiMesh BLAS pool. The producer (MultiMesh) lives in the
+	// storage layer, which we don't want coupled to RT internals. Instead a
+	// small side table indexed by `mm_rid.get_local_index()` parks the per-
+	// surface handles here. `mm_validator` detects RID local-index recycling
+	// so old slots are released proactively rather than waiting for TTL.
+	struct MMSurfaceHandles {
+		LocalVector<RID> per_surface; // Grown on demand; entry per touched surface index.
+		uint32_t mm_validator = 0; // High 32 bits of MM RID id at last access.
+
+		// Resolve / grow storage for `p_surface_index`.
+		RID &surface_handle(uint32_t p_surface_index) {
+			if (p_surface_index >= per_surface.size()) {
+				per_surface.resize(p_surface_index + 1);
+			}
+			return per_surface[p_surface_index];
+		}
 	};
-	HashMap<uint64_t, RTDeformedCacheEntry> deformed_surface_cache;
+	LocalVector<MMSurfaceHandles> mm_handles;
+	RID_Owner<RTMergedMMEntry> merged_mm_pool;
+
+	// Per-frame "touched this frame" lists, used so the raytracing-list
+	// dependency registrar can walk only the slots that were updated, with
+	// zero filtering. Cleared at the top of `prepare_frame`, populated as
+	// `process_deformed_surface` / `_build_merged_mm_blas` access slots.
+	LocalVector<RID> deformed_active_this_frame;
+	LocalVector<RID> merged_mm_active_this_frame;
+
+	// Resolve a producer-cached handle to its slot, allocating fresh on miss.
+	// Centralises the get_or_null/make_rid dance so call sites stay single-line.
+	RTDeformedCacheEntry *_access_deformed_slot(RID &r_handle);
+	RTMergedMMEntry *_access_merged_mm_slot(RID &r_handle);
+
 	LocalVector<uint32_t> material_free_slots;
 	uint32_t next_material_slot = 0;
 	uint64_t vram_used = 0;
@@ -351,6 +399,7 @@ class RenderRaytracing {
 	LocalVector<RID> blass;
 	LocalVector<Transform3D> blas_transforms;
 	LocalVector<uint32_t> instance_flags;
+	LocalVector<uint8_t> instance_masks; // Per-instance ray mask (0x00 = invisible to rays, 0xFF = normal)
 	LocalVector<uint32_t> sbt_offsets; // 0 = default material hit group
 
 	HashMap<RenderSceneBuffersRD *, RTViewportState *> viewport_states;
@@ -430,6 +479,11 @@ public:
 
 	void copy_output_texture(const RenderDataRD *p_render_data);
 	void free_viewport_state(RenderSceneBuffersRD *p_render_buffers);
+
+	// Register read dependencies on per-frame BDA-only buffers (owned deformed VBs
+	// and their prev-frame position copies) so the draw graph inserts the correct
+	// barriers between buffer_copy/blas_update writes and the trace_rays read.
+	void register_raytracing_buffer_dependencies(RD::RaytracingListID p_list);
 
 	SceneShaderRaytracing *get_shader() const { return shader; }
 
