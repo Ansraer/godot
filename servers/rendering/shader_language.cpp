@@ -8913,7 +8913,7 @@ Error ShaderLanguage::_parse_block(BlockNode *p_block, const FunctionInfo &p_fun
 				return ERR_BUG;
 			}
 
-			if (b->parent_function && p_function_info.main_function) {
+			if (b->parent_function && p_function_info.main_function && !p_function_info.allow_return) {
 				_set_error(vformat(RTR("Using '%s' in the '%s' processor function is incorrect."), "return", b->parent_function->name));
 				return ERR_PARSE_ERROR;
 			}

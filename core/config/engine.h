@@ -76,6 +76,7 @@ private:
 	double _physics_interpolation_fraction = 0.0f;
 	bool abort_on_gpu_errors = false;
 	bool use_validation_layers = false;
+	bool use_raytracing_validation = false;
 	bool generate_spirv_debug_info = false;
 	bool extra_gpu_memory_tracking = false;
 #if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
@@ -210,6 +211,7 @@ public:
 
 	bool is_abort_on_gpu_errors_enabled() const;
 	bool is_validation_layers_enabled() const;
+	bool is_raytracing_validation_enabled() const;
 	bool is_generate_spirv_debug_info_enabled() const;
 	bool is_extra_gpu_memory_tracking_enabled() const;
 #if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)

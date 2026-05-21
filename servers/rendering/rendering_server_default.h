@@ -306,6 +306,7 @@ public:
 	}
 
 	FUNC2(shader_set_code, RID, const String &)
+	FUNC2(shader_set_code_rt, RID, const String &)
 	FUNC2(shader_set_path_hint, RID, const String &)
 	FUNC1RC(String, shader_get_code, RID)
 
@@ -748,6 +749,7 @@ public:
 
 	FUNC2(viewport_set_scaling_3d_mode, RID, RSE::ViewportScaling3DMode)
 	FUNC2(viewport_set_scaling_3d_scale, RID, float)
+	FUNC2(viewport_set_frame_generation, RID, bool)
 	FUNC2(viewport_set_fsr_sharpness, RID, float)
 	FUNC2(viewport_set_texture_mipmap_bias, RID, float)
 	FUNC2(viewport_set_anisotropic_filtering_level, RID, RSE::ViewportAnisotropicFiltering)
@@ -885,6 +887,9 @@ public:
 	FUNC1(environment_set_sdfgi_ray_count, RSE::EnvironmentSDFGIRayCount)
 	FUNC1(environment_set_sdfgi_frames_to_converge, RSE::EnvironmentSDFGIFramesToConverge)
 	FUNC1(environment_set_sdfgi_frames_to_update_light, RSE::EnvironmentSDFGIFramesToUpdateLight)
+	FUNC2(environment_set_pathtracing, RID, bool)
+	FUNC2(environment_set_pathtracing_params, RID, const PackedFloat32Array &)
+	FUNC1RC(PackedFloat32Array, environment_get_pathtracing_params, RID)
 
 	FUNC3R(Ref<Image>, environment_bake_panorama, RID, bool, const Size2i &)
 
@@ -947,6 +952,9 @@ public:
 	FUNC1(instance_teleport, RID)
 
 	FUNC2(instance_set_custom_aabb, RID, AABB)
+
+	FUNC3(instance_set_rt_procedural, RID, bool, AABB)
+	FUNC3(instance_set_rt_procedural_bounds, RID, const PackedFloat32Array &, bool)
 
 	FUNC2(instance_attach_skeleton, RID, RID)
 
