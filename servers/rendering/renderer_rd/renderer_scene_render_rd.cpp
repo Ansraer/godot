@@ -553,7 +553,7 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		if (can_use_storage) {
 			for (uint32_t i = 0; i < rb->get_view_count(); i++) {
 				buffers.base_texture = use_upscaled_texture ? rb->get_upscaled_texture(i) : rb->get_internal_texture(i);
-	#ifdef WINDOWS_ENABLED
+#ifdef WINDOWS_ENABLED
 				bool force_lowres_depth = (GetAsyncKeyState(VK_BACK) & 0x8000) != 0;
 #else
 				bool force_lowres_depth = false;
@@ -645,10 +645,10 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 			if (RSG::camera_attributes->camera_attributes_uses_auto_exposure(p_render_data->camera_attributes)) {
 				luminance_texture = luminance->get_current_luminance_buffer(rb); // this will return and empty RID if we don't have an auto exposure buffer
 			}
-		for (uint32_t l = 0; l < rb->get_view_count(); l++) {
-			Size2i vp_size = rb->get_texture_slice_size(RB_SCOPE_BUFFERS, RB_TEX_BLUR_1, 0);
-			RID source = use_upscaled_texture ? rb->get_upscaled_texture(l) : rb->get_internal_texture(l);
-			RID dest = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_BLUR_1, l, 0);
+			for (uint32_t l = 0; l < rb->get_view_count(); l++) {
+				Size2i vp_size = rb->get_texture_slice_size(RB_SCOPE_BUFFERS, RB_TEX_BLUR_1, 0);
+				RID source = use_upscaled_texture ? rb->get_upscaled_texture(l) : rb->get_internal_texture(l);
+				RID dest = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_BLUR_1, l, 0);
 				copy_effects->gaussian_glow(source, dest, vp_size, environment_get_glow_strength(p_render_data->environment), true, environment_get_glow_hdr_luminance_cap(p_render_data->environment), environment_get_exposure(p_render_data->environment), environment_get_glow_bloom(p_render_data->environment), environment_get_glow_hdr_bleed_threshold(p_render_data->environment), environment_get_glow_hdr_bleed_scale(p_render_data->environment), luminance_texture, auto_exposure_scale);
 
 				for (int i = 1; i < (max_glow_index + 1); i++) {
@@ -670,9 +670,9 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 			for (uint32_t l = 0; l < rb->get_view_count(); l++) {
 				RD::get_singleton()->draw_command_begin_label("Gaussian Glow downsample");
 
-			Size2i source_size = rb->get_texture_slice_size(RB_SCOPE_BUFFERS, RB_TEX_COLOR, 0);
+				Size2i source_size = rb->get_texture_slice_size(RB_SCOPE_BUFFERS, RB_TEX_COLOR, 0);
 
-			source = rb->get_internal_texture(l);
+				source = rb->get_internal_texture(l);
 				dest = rb->get_texture_slice(RB_SCOPE_BUFFERS, RB_TEX_BLUR_1, l, 1); // Level 1 is quarter res.
 
 				copy_effects->gaussian_glow_downsample_raster(source, dest, luminance_multiplier, source_size, environment_get_glow_strength(p_render_data->environment), true, environment_get_glow_hdr_luminance_cap(p_render_data->environment), environment_get_exposure(p_render_data->environment), environment_get_glow_bloom(p_render_data->environment), environment_get_glow_hdr_bleed_threshold(p_render_data->environment), environment_get_glow_hdr_bleed_scale(p_render_data->environment));

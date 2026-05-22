@@ -156,8 +156,8 @@
 #endif // TOOLS_ENABLED && !GDSCRIPT_NO_LSP
 #endif // MODULE_GDSCRIPT_ENABLED
 
-#include "drivers/streamline/streamline.h"
 #include "drivers/aftermath/aftermath.h"
+#include "drivers/streamline/streamline.h"
 
 /* Static members */
 
@@ -1365,12 +1365,12 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 				OS::get_singleton()->print("Missing GPU index argument, aborting.\n");
 				goto error;
 			}
-	} else if (arg == "--gpu-validation") {
-		Engine::singleton->use_validation_layers = true;
-	} else if (arg == "--raytracing-validation") {
-		Engine::singleton->use_raytracing_validation = true;
+		} else if (arg == "--gpu-validation") {
+			Engine::singleton->use_validation_layers = true;
+		} else if (arg == "--raytracing-validation") {
+			Engine::singleton->use_raytracing_validation = true;
 #ifdef DEBUG_ENABLED
-	} else if (arg == "--gpu-abort") {
+		} else if (arg == "--gpu-abort") {
 			Engine::singleton->abort_on_gpu_errors = true;
 #endif
 		} else if (arg == "--generate-spirv-debug-info") {

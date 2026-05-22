@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  rt_procedural_instance_3d.h                                          */
+/*  rt_procedural_instance_3d.h                                           */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -34,12 +34,9 @@
 #include "scene/3d/visual_instance_3d.h"
 #include "scene/resources/mesh.h"
 
-/// Ray-traced procedural geometry node.
-/// Supports a single centered AABB (via `size`) or an array of sub-AABBs
-/// (via `bounds`) for complex procedural shapes like terrain or
-/// multi-volume SDF scenes.
-/// Intersection logic comes from a ShaderMaterial assigned via material_override,
-/// which must contain a `void intersection() {}` entry point.
+// Ray-traced procedural geometry node. Supports a single centered AABB (via size)
+// or an array of sub-AABBs (via bounds). Intersection logic requires a ShaderMaterial
+// with a void intersection() entry point assigned via material_override.
 class RTProceduralInstance3D : public GeometryInstance3D {
 	GDCLASS(RTProceduralInstance3D, GeometryInstance3D);
 
@@ -47,8 +44,7 @@ class RTProceduralInstance3D : public GeometryInstance3D {
 	Vector<AABB> bounds;
 	AABB custom_enclosing_aabb; // Zero-size = auto-compute from bounds.
 	bool expose_aabb_bounds = false;
-	// Empty (zero-surface) ArrayMesh used purely to satisfy the INSTANCE_MESH
-	// base-type gate in RendererSceneCull. It owns no GPU resources.
+	// Empty ArrayMesh to satisfy the INSTANCE_MESH base-type gate in RendererSceneCull.
 	Ref<ArrayMesh> null_base_mesh;
 
 	void _update_procedural();
@@ -61,23 +57,16 @@ protected:
 	static void _bind_methods();
 
 public:
-	/// Set the width/height/depth of the single procedural AABB (centered on origin).
 	void set_size(const Vector3 &p_size);
 	Vector3 get_size() const;
 
-	/// Multi-AABB mode: set the full list of per-primitive AABBs in local space.
-	/// Passing an empty array reverts to single-AABB mode.
 	void set_bounds(const TypedArray<AABB> &p_bounds);
 	TypedArray<AABB> get_bounds() const;
-	/// Return true when the multi-AABB array is populated.
 	bool is_multi_aabb() const;
 
-	/// Override the auto-computed enclosing AABB with a user-specified one (min/max).
-	/// Set to default AABB() to revert to auto-computation.
 	void set_custom_enclosing_aabb(const AABB &p_aabb);
 	AABB get_custom_enclosing_aabb() const;
 
-	/// When true, AABB_MIN / AABB_MAX built-ins are available in the intersection shader.
 	void set_expose_aabb_bounds(bool p_expose);
 	bool get_expose_aabb_bounds() const;
 

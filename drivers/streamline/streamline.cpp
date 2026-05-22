@@ -29,12 +29,13 @@
 /**************************************************************************/
 
 #include "streamline.h"
-#include "streamline_context.h"
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
-#include "core/input/input.h"
 #include "core/object/object.h"
+#ifdef STREAMLINE_ENABLED
+#include "drivers/streamline/streamline_context.h"
+#endif
 
 Streamline *Streamline::singleton = nullptr;
 

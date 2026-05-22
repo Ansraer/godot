@@ -35,6 +35,7 @@
 #include "servers/rendering/renderer_rd/effects/copy_effects.h"
 #include "servers/rendering/renderer_rd/effects/depth_reconstruct.h"
 #include "servers/rendering/renderer_rd/effects/debug_effects.h"
+#include "servers/rendering/renderer_rd/effects/depth_reconstruct.h"
 #include "servers/rendering/renderer_rd/effects/fsr.h"
 #include "servers/rendering/renderer_rd/effects/luminance.h"
 #include "servers/rendering/renderer_rd/effects/resolve.h"

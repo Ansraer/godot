@@ -30,11 +30,9 @@
 
 #pragma once
 
-#include "core/object/worker_thread_pool.h"
 #include "core/templates/local_vector.h"
-#include "core/templates/safe_refcount.h"
 #include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
-#include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
+#include "servers/rendering/renderer_rd/renderer_scene_render_rd.h" // IWYU pragma: keep
 #include "servers/rendering/renderer_rd/shaders/raytracing/scene_raytracing_raygen.glsl.gen.h"
 
 namespace RendererSceneRenderImplementation {
@@ -480,7 +478,7 @@ private:
 	bool _ensure_variant_compile_context(uint32_t p_rt_flags);
 
 	bool async_compilation_enabled = true;
-	Mutex spirv_compile_mutex; // Serialise glslang calls (RD::shader_compile_spirv_from_source).
+	Mutex spirv_compile_mutex; // Serialize glslang calls (RD::shader_compile_spirv_from_source).
 	CompileLane compile_lane;
 
 public:

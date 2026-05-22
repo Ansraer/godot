@@ -2310,7 +2310,7 @@ void MaterialStorage::shader_set_code_rt(RID p_shader, const String &p_code_rt) 
 		shader->code_rt_hash = 0;
 		shader->code_rt_hash_b = 0;
 	} else {
-		// Two passes of hash64 with different bookends produce a 128-bit identity. 
+		// Two passes of hash64 with different bookends produce a 128-bit identity.
 		// Birthday problem is negligible for any realistic project shader count at 128 bit.
 		const String wrapped_a = String("RT_HG_A|") + p_code_rt + "|A_END";
 		const String wrapped_b = String("RT_HG_B|") + p_code_rt + "|B_END";

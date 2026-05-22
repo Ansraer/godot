@@ -30,12 +30,12 @@
 
 #pragma once
 
-#include "core/object/class_db.h"
+#include "core/object/class_db.h" // IWYU pragma: keep
 #include "core/object/object.h"
 #include "core/os/thread_safe.h"
-#include "core/variant/binder_common.h"
+#include "core/variant/binder_common.h" // IWYU pragma: keep
 #include "core/variant/variant.h"
-#include "streamline_data.h"
+#include "drivers/streamline/streamline_data.h"
 
 class Streamline : public Object {
 	GDCLASS(Streamline, Object);

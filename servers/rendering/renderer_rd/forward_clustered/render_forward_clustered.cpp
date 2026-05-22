@@ -1132,7 +1132,7 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 
 			// Alpha-only (RT path): skip instances with no transparent/fading
 			// surfaces; opaque geometry is in the TLAS. Uses rt_pass_flags so
-			// `#if defined(RT)` overrides are honoured.
+			// `#if defined(RT)` overrides are honored.
 			if (p_alpha_only && fade_alpha >= FADE_ALPHA_PASS_THRESHOLD) {
 				bool has_alpha_surface = false;
 				const GeometryInstanceSurfaceDataCache *s = inst->surface_caches;
@@ -2141,8 +2141,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	// Captured from build_tlas/update_uniform_set so the trace-dispatch block
 	// below can bind without RenderRaytracing keeping hidden "current" state.
 	RID rt_uniform_set;
-
-
 
 	// Create TLAS for raytracing if enabled
 	if (scene_features.rt && rb_data.is_valid() && raytracing && raytracing->get_shader()) {

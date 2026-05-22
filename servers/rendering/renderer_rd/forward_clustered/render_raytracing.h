@@ -363,7 +363,7 @@ class RenderRaytracing {
 	RID_Owner<RTDeformedCacheEntry> deformed_pool;
 	LocalVector<RID> deformed_active_this_frame;
 
-	RID_Owner<RTMergedMMEntry> merged_mm_pool;	
+	RID_Owner<RTMergedMMEntry> merged_mm_pool;
 	LocalVector<RID> merged_mm_active_this_frame;
 
 	RTDeformedCacheEntry *_access_deformed_slot(RID &r_handle);

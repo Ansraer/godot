@@ -2174,7 +2174,7 @@ void MeshStorage::_multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_
 	// Trade-off: CPU memory usage doubles for every MultiMesh that calls set_buffer().
 	static const bool keep_cpu_cache = GLOBAL_GET("rendering/pathtracer/multimesh_cache_cpu_transforms");
 	if (keep_cpu_cache && multimesh->data_cache.size() == 0) {
-		// Initialise the data cache from the data we already have on CPU.
+		// Initialize the data cache from the data we already have on CPU.
 		uint32_t cache_size = multimesh->instances * multimesh->stride_cache;
 		if (multimesh->motion_vectors_enabled) {
 			cache_size *= 2;

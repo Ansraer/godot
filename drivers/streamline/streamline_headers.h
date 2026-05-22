@@ -47,14 +47,14 @@
 #pragma warning(disable : 4471)
 #endif
 
-#include "../../thirdparty/streamline/include/sl.h"
-#include "../../thirdparty/streamline/include/sl_consts.h"
-#include "../../thirdparty/streamline/include/sl_dlss.h"
-#include "../../thirdparty/streamline/include/sl_dlss_d.h"
-#include "../../thirdparty/streamline/include/sl_dlss_g.h"
-#include "../../thirdparty/streamline/include/sl_nis.h"
-#include "../../thirdparty/streamline/include/sl_pcl.h"
-#include "../../thirdparty/streamline/include/sl_reflex.h"
+#include <thirdparty/streamline/include/sl.h>
+#include <thirdparty/streamline/include/sl_consts.h>
+#include <thirdparty/streamline/include/sl_dlss.h>
+#include <thirdparty/streamline/include/sl_dlss_d.h>
+#include <thirdparty/streamline/include/sl_dlss_g.h>
+#include <thirdparty/streamline/include/sl_nis.h>
+#include <thirdparty/streamline/include/sl_pcl.h>
+#include <thirdparty/streamline/include/sl_reflex.h>
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

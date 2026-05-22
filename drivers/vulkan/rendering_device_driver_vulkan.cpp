@@ -43,7 +43,6 @@
 #endif
 
 #include "drivers/aftermath/aftermath.h"
-#include "drivers/aftermath/aftermath_context.h"
 
 #if defined(SWAPPY_FRAME_PACING_ENABLED)
 #include "platform/android/java_godot_wrapper.h"

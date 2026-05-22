@@ -30,8 +30,6 @@
 
 #pragma once
 
-#include "servers/rendering/renderer_rd/shader_rd.h"
-
 #include "servers/rendering/renderer_rd/shaders/effects/motion_vector_decode.glsl.gen.h"
 
 namespace RendererRD {

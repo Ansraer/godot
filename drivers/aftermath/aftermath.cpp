@@ -29,9 +29,11 @@
 /**************************************************************************/
 
 #include "aftermath.h"
-#include "aftermath_context.h"
 
+#ifdef AFTERMATH_ENABLED
 #include "core/config/engine.h"
+#include "drivers/aftermath/aftermath_context.h"
+#endif
 
 Aftermath *Aftermath::singleton = nullptr;
 

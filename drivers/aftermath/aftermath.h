@@ -30,8 +30,8 @@
 
 #pragma once
 
-#include "aftermath_data.h"
 #include "core/object/object.h"
+#include "drivers/aftermath/aftermath_data.h"
 
 /**
  * Aftermath - thin singleton wrapper around AftermathContext.

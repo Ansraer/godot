@@ -32,7 +32,6 @@
 
 #include "core/config/project_settings.h"
 #include "core/error/error_macros.h"
-#include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/math/math_defs.h"
 #include "core/os/os.h"

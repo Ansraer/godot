@@ -542,18 +542,18 @@ void main() {
 
 // Write all attributes and report the intersection. Transparently delta-compresses
 // PREV_POSITION into spare .w bytes of packed_normal/tangent + prev_pos_delta_yz.
-#define report_intersection(t_hit, kind) \
-	{ \
-		vec3 _obj_hit = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * (t_hit); \
+#define report_intersection(t_hit, kind)                                                      \
+	{                                                                                         \
+		vec3 _obj_hit = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * (t_hit);           \
 		vec3 _delta = any(isnan(m_PREV_POSITION)) ? vec3(0.0) : (m_PREV_POSITION - _obj_hit); \
-		uint _n4 = packSnorm4x8(vec4(m_HIT_NORMAL, 0.0)); \
-		uint _t4 = packSnorm4x8(vec4(m_HIT_TANGENT, 0.0)); \
-		uint _dx = packHalf2x16(vec2(_delta.x, 0.0)); \
-		hit_attribs.bary_or_uv = m_HIT_UV; \
-		hit_attribs.packed_normal = (_n4 & 0x00FFFFFFu) | ((_dx & 0xFFu) << 24u); \
-		hit_attribs.packed_tangent = (_t4 & 0x00FFFFFFu) | (((_dx >> 8u) & 0xFFu) << 24u); \
-		hit_attribs.prev_pos_delta_yz = packHalf2x16(vec2(_delta.y, _delta.z)); \
-		reportIntersectionEXT(t_hit, kind); \
+		uint _n4 = packSnorm4x8(vec4(m_HIT_NORMAL, 0.0));                                     \
+		uint _t4 = packSnorm4x8(vec4(m_HIT_TANGENT, 0.0));                                    \
+		uint _dx = packHalf2x16(vec2(_delta.x, 0.0));                                         \
+		hit_attribs.bary_or_uv = m_HIT_UV;                                                    \
+		hit_attribs.packed_normal = (_n4 & 0x00FFFFFFu) | ((_dx & 0xFFu) << 24u);             \
+		hit_attribs.packed_tangent = (_t4 & 0x00FFFFFFu) | (((_dx >> 8u) & 0xFFu) << 24u);    \
+		hit_attribs.prev_pos_delta_yz = packHalf2x16(vec2(_delta.y, _delta.z));               \
+		reportIntersectionEXT(t_hit, kind);                                                   \
 	}
 
 #ifdef RT_CUSTOM_HIT_GROUP

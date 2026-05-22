@@ -1265,4 +1265,3 @@ EditorNode3DGizmoPlugin::~EditorNode3DGizmoPlugin() {
 		Node3DEditor::get_singleton()->update_all_gizmos();
 	}
 }
-

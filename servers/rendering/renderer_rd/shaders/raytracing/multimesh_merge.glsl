@@ -22,16 +22,35 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 // Source vertex/index buffers are immutable mesh data and accessed via BDA.
 // Everything else (mm transforms, mesh attributes, all merged outputs) goes
 // through descriptor sets so the draw graph tracks the dependencies for us.
-layout(buffer_reference, std430) readonly buffer SrcFloatBuf { float v[]; };
-layout(buffer_reference, std430) readonly buffer SrcUintBuf { uint v[]; };
+layout(buffer_reference, std430) readonly buffer SrcFloatBuf {
+	float v[];
+};
+layout(buffer_reference, std430) readonly buffer SrcUintBuf {
+	uint v[];
+};
 
-layout(set = 0, binding = 0) restrict writeonly buffer DstVtxBuf { uint v[]; } dst_vtx;
-layout(set = 0, binding = 1) restrict readonly buffer MMBuf { float v[]; } mm_buf;
-layout(set = 0, binding = 2) restrict writeonly buffer DstAttrBuf { uint v[]; } dst_attr;
-layout(set = 0, binding = 3) restrict readonly buffer SrcAttrBuf { uint v[]; } src_attr;
+layout(set = 0, binding = 0) restrict writeonly buffer DstVtxBuf {
+	uint v[];
+}
+dst_vtx;
+layout(set = 0, binding = 1) restrict readonly buffer MMBuf {
+	float v[];
+}
+mm_buf;
+layout(set = 0, binding = 2) restrict writeonly buffer DstAttrBuf {
+	uint v[];
+}
+dst_attr;
+layout(set = 0, binding = 3) restrict readonly buffer SrcAttrBuf {
+	uint v[];
+}
+src_attr;
 
 #ifdef MODE_INDEXED
-layout(set = 0, binding = 4) restrict writeonly buffer DstIdxBuf { uint v[]; } dst_idx;
+layout(set = 0, binding = 4) restrict writeonly buffer DstIdxBuf {
+	uint v[];
+}
+dst_idx;
 #endif
 
 layout(push_constant, std430) uniform PC {
@@ -53,7 +72,8 @@ layout(push_constant, std430) uniform PC {
 	uint mm_offset; // mm current instance offset (motion vectors double-buffer)
 	uint has_tbn; // 1 if mesh has normals/tangents, 0 otherwise
 	uint attr_stride_words; // attribute stride in uint words (0 = mesh has no attribs)
-} push;
+}
+push;
 
 vec2 vec3_to_oct(vec3 v) {
 	float abs_sum = abs(v.x) + abs(v.y) + abs(v.z);

@@ -30,8 +30,8 @@
 
 #include "rt_procedural_instance_3d_gizmo_plugin.h"
 
-#include "editor/settings/editor_settings.h"
 #include "editor/scene/3d/gizmos/gizmo_3d_helper.h"
+#include "editor/settings/editor_settings.h"
 #include "scene/3d/rt_procedural_instance_3d.h"
 
 RTProceduralInstance3DGizmoPlugin::RTProceduralInstance3DGizmoPlugin() {

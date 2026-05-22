@@ -31,7 +31,9 @@
 #include "error_macros.h"
 
 #include "core/core_globals.h"
+#ifdef ERROR_BACKTRACE_ENABLED
 #include "core/error/error_backtrace.h"
+#endif
 #include "core/io/logger.h"
 #include "core/object/object_id.h"
 #include "core/object/script_language.h"

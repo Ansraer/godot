@@ -943,7 +943,7 @@ Error RenderingContextDriverVulkan::initialize() {
 	module = LoadLibraryA("sl.interposer.dll");
 	if (module != nullptr) {
 		// note: function pointer is cast through void function pointer to silence cast-function-type warning on gcc8
-		PFN_vkGetInstanceProcAddr vk_getInstanceProcAddr = (PFN_vkGetInstanceProcAddr)(void (*)(void))GetProcAddress(module, "vkGetInstanceProcAddr");
+		PFN_vkGetInstanceProcAddr vk_getInstanceProcAddr = (PFN_vkGetInstanceProcAddr)(void (*)())GetProcAddress(module, "vkGetInstanceProcAddr");
 		volkInitializeCustom(vk_getInstanceProcAddr);
 	} else {
 		if (volkInitialize() != VK_SUCCESS) {

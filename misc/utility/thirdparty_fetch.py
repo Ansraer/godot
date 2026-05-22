@@ -76,7 +76,7 @@ def fetch_zip(
                     continue
                 if prefix and not member.startswith(prefix):
                     continue
-                rel = member[len(prefix):]
+                rel = member[len(prefix) :]
                 dest = os.path.join(dest_dir, rel)
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 with zf.open(member) as src, open(dest, "wb") as dst:

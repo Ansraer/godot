@@ -28,17 +28,16 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-// Godot headers first so their typedefs don't clash with Windows/SDK macros.
-#include "core/error/error_macros.h"
-#include "core/os/os.h"
-#include "core/string/print_string.h"
-#include "core/string/ustring.h"
-#include "core/variant/variant.h"
-
+// All Godot and platform headers are only needed when Aftermath is compiled in.
+// Godot headers come first so their typedefs don't clash with Windows/SDK macros.
 // Platform headers must come BEFORE the SDK headers - the Aftermath SDK gates
 // its D3D12/Vulkan PFN typedefs and structs on __d3d12_h__ / VULKAN_H_ being
 // already defined. Without this, those typedefs simply don't exist.
 #ifdef AFTERMATH_ENABLED
+#include "core/error/error_macros.h"
+#include "core/os/os.h"
+#include "core/string/print_string.h"
+#include "core/string/ustring.h"
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -48,7 +47,7 @@
 #ifdef AFTERMATH_ENABLED_VULKAN
 #include <vulkan/vulkan.h>
 #endif
-#include "aftermath_headers.h"
+#include "drivers/aftermath/aftermath_headers.h"
 #endif // AFTERMATH_ENABLED
 
 #include "aftermath_context.h"
@@ -68,12 +67,18 @@ AftermathContext &AftermathContext::get() {
 
 #ifndef AFTERMATH_ENABLED
 
-bool AftermathContext::load_functions() { return false; }
+bool AftermathContext::load_functions() {
+	return false;
+}
 void AftermathContext::register_shader(AftermathShaderType, const uint8_t *, uint32_t) {}
 void AftermathContext::initialize_d3d12(void *) {}
 void AftermathContext::wait_for_dump() {}
-const char *const *AftermathContext::vk_required_extensions() const { return nullptr; }
-void *AftermathContext::vk_device_diagnostics_config() { return nullptr; }
+const char *const *AftermathContext::vk_required_extensions() const {
+	return nullptr;
+}
+void *AftermathContext::vk_device_diagnostics_config() {
+	return nullptr;
+}
 
 #else // AFTERMATH_ENABLED
 
@@ -166,7 +171,10 @@ bool AftermathContext::load_functions() {
 
 #define AM_GETPROC(field, export_name) \
 	field = (void *)GetProcAddress(lib, export_name); \
-	if (!field) { print_verbose("Aftermath: missing export " export_name "."); return false; }
+	if (!field) { \
+		print_verbose("Aftermath: missing export " export_name "."); \
+		return false; \
+	}
 
 	AM_GETPROC(fn_EnableGpuCrashDumps, "GFSDK_Aftermath_EnableGpuCrashDumps")
 	AM_GETPROC(fn_DisableGpuCrashDumps, "GFSDK_Aftermath_DisableGpuCrashDumps")
