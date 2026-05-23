@@ -7929,6 +7929,9 @@ void RenderingDevice::draw_command_begin_label(const Span<char> p_label_name, co
 	ERR_RENDER_THREAD_GUARD();
 
 	if (!context->is_debug_utils_enabled()) {
+		if (Engine::get_singleton() && Engine::get_singleton()->is_gpu_markers_enabled()) {
+			WARN_PRINT_ONCE("GPU markers are unavailable for this rendering driver or build.");
+		}
 		return;
 	}
 

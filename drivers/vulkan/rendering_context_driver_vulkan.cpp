@@ -461,6 +461,9 @@ Error RenderingContextDriverVulkan::_initialize_instance_extensions() {
 #else
 	bool want_debug_utils = OS::get_singleton()->is_stdout_verbose();
 #endif
+	if (Engine::get_singleton() && Engine::get_singleton()->is_gpu_markers_enabled()) {
+		want_debug_utils = true;
+	}
 	if (want_debug_utils) {
 		_register_requested_instance_extension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, false);
 	}

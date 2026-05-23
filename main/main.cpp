@@ -663,7 +663,8 @@ void Main::print_help(const char *p_binary) {
 #ifdef DEBUG_ENABLED
 	print_help_option("--gpu-abort", "Abort on graphics API usage errors (usually validation layer errors). May help see the problem if your system freezes.\n", CLI_OPTION_AVAILABILITY_TEMPLATE_DEBUG);
 #endif
-	print_help_option("--generate-spirv-debug-info", "Generate SPIR-V debug information (Vulkan only). This allows source-level shader debugging with RenderDoc.\n");
+	print_help_option("--debug-shaders, --generate-spirv-debug-info", "Generate SPIR-V debug information (Vulkan only). This allows source-level shader debugging with RenderDoc.\n");
+	print_help_option("--gpu-markers", "Emit GPU begin/end event markers for tools such as GPU Trace and RenderDoc (Vulkan: debug utils; D3D12: PIX V2 BeginEvent/EndEvent).\n");
 #if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
 	print_help_option("--extra-gpu-memory-tracking", "Enables additional memory tracking (see class reference for `RenderingDevice.get_driver_and_device_memory_report()` and linked methods). Currently only implemented for Vulkan. Enabling this feature may cause crashes on some systems due to buggy drivers or bugs in the Vulkan Loader. See https://github.com/godotengine/godot/issues/95967\n");
 	print_help_option("--accurate-breadcrumbs", "Force barriers between breadcrumbs. Useful for narrowing down a command causing GPU resets. Currently only implemented for Vulkan.\n");
@@ -1186,7 +1187,9 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 		if (arg == "--debug" ||
 				arg == "--verbose" ||
 				arg == "--disable-crash-handler" ||
+				arg == "--debug-shaders" ||
 				arg == "--generate-spirv-debug-info" ||
+				arg == "--gpu-markers" ||
 				arg == "--gpu-validation" ||
 				arg == "--raytracing-validation") {
 			forwardable_cli_arguments[CLI_SCOPE_TOOL].push_back(arg);
@@ -1373,8 +1376,10 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 		} else if (arg == "--gpu-abort") {
 			Engine::singleton->abort_on_gpu_errors = true;
 #endif
-		} else if (arg == "--generate-spirv-debug-info") {
+		} else if (arg == "--debug-shaders" || arg == "--generate-spirv-debug-info") {
 			Engine::singleton->generate_spirv_debug_info = true;
+		} else if (arg == "--gpu-markers") {
+			Engine::singleton->use_gpu_markers = true;
 #if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
 		} else if (arg == "--extra-gpu-memory-tracking") {
 			Engine::singleton->extra_gpu_memory_tracking = true;

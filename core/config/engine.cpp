@@ -290,6 +290,10 @@ bool Engine::is_generate_spirv_debug_info_enabled() const {
 	return generate_spirv_debug_info;
 }
 
+bool Engine::is_gpu_markers_enabled() const {
+	return use_gpu_markers;
+}
+
 bool Engine::is_extra_gpu_memory_tracking_enabled() const {
 	return extra_gpu_memory_tracking;
 }

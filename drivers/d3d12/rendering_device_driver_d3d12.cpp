@@ -56,6 +56,8 @@ using Microsoft::WRL::ComPtr;
 #undef UNUSED
 #endif
 
+#include "drivers/d3d12/d3d12_pix_markers.h"
+
 #ifdef PIX_ENABLED
 #if defined(__GNUC__)
 #define _MSC_VER 1800
@@ -5688,17 +5690,13 @@ void RenderingDeviceDriverD3D12::command_timestamp_write(CommandBufferID p_cmd_b
 }
 
 void RenderingDeviceDriverD3D12::command_begin_label(CommandBufferID p_cmd_buffer, const char *p_label_name, const Color &p_color) {
-#ifdef PIX_ENABLED
 	const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
-	PIXBeginEvent(cmd_buf_info->cmd_list.Get(), p_color.to_argb32(), p_label_name);
-#endif
+	d3d12_pix_begin_event(cmd_buf_info->cmd_list.Get(), p_color.to_argb32(), p_label_name);
 }
 
 void RenderingDeviceDriverD3D12::command_end_label(CommandBufferID p_cmd_buffer) {
-#ifdef PIX_ENABLED
 	const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
-	PIXEndEvent(cmd_buf_info->cmd_list.Get());
-#endif
+	d3d12_pix_end_event(cmd_buf_info->cmd_list.Get());
 }
 
 void RenderingDeviceDriverD3D12::command_insert_breadcrumb(CommandBufferID p_cmd_buffer, uint32_t p_data) {

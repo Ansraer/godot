@@ -1676,7 +1676,6 @@ uint32_t RenderForwardClustered::_count_directional_lights(const RenderDataRD *p
 void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, bool p_use_ssao, bool p_use_ssil, bool p_use_ssr, bool p_use_gi, const RID *p_normal_roughness_slices, RID p_voxel_gi_buffer) {
 	// Render shadows while GI is rendering, due to how barriers are handled, this should happen at the same time
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
-	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 
 	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
 	Ref<RenderBufferDataForwardClustered> rb_data;
@@ -1802,6 +1801,21 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 
 	RENDER_TIMESTAMP("Pre Opaque Render");
 
+	uint32_t directional_light_count = 0;
+	uint32_t positional_light_count = 0;
+	_setup_lights_cluster_decals(p_render_data, directional_light_count, positional_light_count);
+
+	if (rb_data.is_valid()) {
+		RENDER_TIMESTAMP("Update Volumetric Fog");
+		bool directional_shadows = RendererRD::LightStorage::get_singleton()->has_directional_shadows(directional_light_count);
+		_update_volumetric_fog(rb, p_render_data->environment, p_render_data->scene_data->cam_projection, p_render_data->scene_data->cam_transform, p_render_data->scene_data->prev_cam_transform.affine_inverse(), p_render_data->shadow_atlas, directional_light_count, directional_shadows, positional_light_count, p_render_data->voxel_gi_count, *p_render_data->fog_volumes);
+	}
+}
+
+void RenderForwardClustered::_setup_lights_cluster_decals(RenderDataRD *p_render_data, uint32_t &r_directional_light_count, uint32_t &r_positional_light_count) {
+	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
+	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
+
 	if (current_cluster_builder) {
 		// Note: when rendering stereoscopic (multiview) we are using our combined frustum projection to create
 		// our cluster data. We use reprojection in the shader to adjust for our left/right eye.
@@ -1822,21 +1836,15 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 		light_storage->update_reflection_probe_buffer(p_render_data, *p_render_data->reflection_probes, p_render_data->scene_data->cam_transform.affine_inverse(), p_render_data->environment);
 	}
 
-	uint32_t directional_light_count = 0;
-	uint32_t positional_light_count = 0;
-	light_storage->update_light_buffers(p_render_data, *p_render_data->lights, p_render_data->scene_data->cam_transform, p_render_data->shadow_atlas, using_shadows, directional_light_count, positional_light_count, p_render_data->directional_light_soft_shadows);
+	r_directional_light_count = 0;
+	r_positional_light_count = 0;
+	light_storage->update_light_buffers(p_render_data, *p_render_data->lights, p_render_data->scene_data->cam_transform, p_render_data->shadow_atlas, using_shadows, r_directional_light_count, r_positional_light_count, p_render_data->directional_light_soft_shadows);
 	texture_storage->update_decal_buffer(*p_render_data->decals, p_render_data->scene_data->cam_transform);
 
-	p_render_data->directional_light_count = directional_light_count;
+	p_render_data->directional_light_count = r_directional_light_count;
 
 	if (current_cluster_builder) {
 		current_cluster_builder->bake_cluster();
-	}
-
-	if (rb_data.is_valid()) {
-		RENDER_TIMESTAMP("Update Volumetric Fog");
-		bool directional_shadows = RendererRD::LightStorage::get_singleton()->has_directional_shadows(directional_light_count);
-		_update_volumetric_fog(rb, p_render_data->environment, p_render_data->scene_data->cam_projection, p_render_data->scene_data->cam_transform, p_render_data->scene_data->prev_cam_transform.affine_inverse(), p_render_data->shadow_atlas, directional_light_count, directional_shadows, positional_light_count, p_render_data->voxel_gi_count, *p_render_data->fog_volumes);
 	}
 }
 
@@ -2508,6 +2516,14 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 				RD::get_singleton()->draw_command_end_label();
 			}
 		}
+	} else {
+		// TODO(pt): Pathtracer still rasterizes transparents on top of the RT result, which needs
+		// the reflection probe / light / decal buffers and the cluster grid to be valid for the
+		// current frame. Once PT handles transparents end-to-end we can drop the raster transparent
+		// pass below.
+		uint32_t pt_directional_light_count = 0;
+		uint32_t pt_positional_light_count = 0;
+		_setup_lights_cluster_decals(p_render_data, pt_directional_light_count, pt_positional_light_count);
 	}
 
 	// Execute raytracing if enabled (replaces opaque/motion vector pass)
