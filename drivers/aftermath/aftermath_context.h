@@ -94,6 +94,18 @@ private:
 	Mutex shader_map_mutex;
 	HashMap<uint64_t, Vector<uint8_t>> shader_map;
 
+	// In-memory store of shader debug info (.nvdbg) blobs, keyed by the
+	// 128-bit GFSDK_Aftermath_ShaderDebugInfoIdentifier. The decoder requests
+	// these by identifier at crash time to map a GPU PC back to IL/source.
+	// Keep the key as raw uint64s so this header stays free of SDK types.
+	struct ShaderDebugInfoBlob {
+		uint64_t id0 = 0;
+		uint64_t id1 = 0;
+		Vector<uint8_t> data;
+	};
+	Mutex debug_info_mutex;
+	Vector<ShaderDebugInfoBlob> debug_info_blobs;
+
 	char _dump_dir[512] = {};
 	// Raw storage for VkDeviceDiagnosticsConfigCreateInfoNV (avoids leaking SDK types).
 	uint8_t vk_diag_config_storage[64] = {};
@@ -110,5 +122,6 @@ private:
 	static void _cb_resolve_marker(const void *p_marker, uint32_t p_size, void *p_user, void **pp_resolved, uint32_t *p_resolved_size);
 	static void _cb_shader_lookup(const void *p_hash, void *p_set_shader_fn, void *p_user);
 	static void _cb_shader_debug_info_lookup(const void *p_id, void *p_set_debug_info_fn, void *p_user);
+	static void _cb_shader_source_debug_info_lookup(const void *p_name, void *p_set_debug_info_fn, void *p_user);
 #endif // AFTERMATH_ENABLED
 };

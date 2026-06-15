@@ -463,7 +463,7 @@ void AftermathContext::_cb_gpu_crash_dump(const void *p_data, const uint32_t p_s
 			GFSDK_Aftermath_GpuCrashDumpFormatterFlags_NONE,
 			reinterpret_cast<PFN_GFSDK_Aftermath_ShaderDebugInfoLookupCb>(&AftermathContext::_cb_shader_debug_info_lookup),
 			reinterpret_cast<PFN_GFSDK_Aftermath_ShaderLookupCb>(&AftermathContext::_cb_shader_lookup),
-			reinterpret_cast<PFN_GFSDK_Aftermath_ShaderSourceDebugInfoLookupCb>(&AftermathContext::_cb_shader_debug_info_lookup),
+			reinterpret_cast<PFN_GFSDK_Aftermath_ShaderSourceDebugInfoLookupCb>(&AftermathContext::_cb_shader_source_debug_info_lookup),
 			self,
 			&json_size);
 
@@ -500,6 +500,18 @@ void AftermathContext::_cb_shader_debug_info(const void *p_data, const uint32_t 
 			&id);
 	if (res != GFSDK_Aftermath_Result_Success) {
 		return;
+	}
+
+	// Keep the blob in memory so _cb_shader_debug_info_lookup can hand it back
+	// to the decoder at crash time; without this, the JSON has no PC->source map.
+	{
+		MutexLock lock(self->debug_info_mutex);
+		ShaderDebugInfoBlob blob;
+		blob.id0 = id.id[0];
+		blob.id1 = id.id[1];
+		blob.data.resize(p_size);
+		memcpy(blob.data.ptrw(), p_data, p_size);
+		self->debug_info_blobs.push_back(blob);
 	}
 
 	char path[512] = {};
@@ -543,11 +555,37 @@ void AftermathContext::_cb_shader_lookup(const void *p_hash, void *p_set_shader_
 	if (self->shader_map.has(key)) {
 		const Vector<uint8_t> &bytes = self->shader_map[key];
 		set_binary(bytes.ptr(), bytes.size());
+		print_line(String("Aftermath: shader binary lookup HIT hash=") + String::num_uint64(key, 16, true) + " (" + itos(bytes.size()) + " bytes)");
+	} else {
+		print_line(String("Aftermath: shader binary lookup MISS hash=") + String::num_uint64(key, 16, true) + " (have " + itos(self->shader_map.size()) + " registered)");
 	}
 }
 
-void AftermathContext::_cb_shader_debug_info_lookup(const void *, void *, void *) {
-	// .nvdbg files are written to disk; Nsight Graphics reads them from there.
+void AftermathContext::_cb_shader_debug_info_lookup(const void *p_id, void *p_set_debug_info_fn, void *p_user) {
+	AftermathContext *self = static_cast<AftermathContext *>(p_user);
+	const GFSDK_Aftermath_ShaderDebugInfoIdentifier *id =
+			static_cast<const GFSDK_Aftermath_ShaderDebugInfoIdentifier *>(p_id);
+	auto set_debug_info = reinterpret_cast<PFN_GFSDK_Aftermath_SetData>(p_set_debug_info_fn);
+
+	char id_str[40] = {};
+	snprintf(id_str, sizeof(id_str), "%016llx-%016llx",
+			(unsigned long long)id->id[0], (unsigned long long)id->id[1]);
+
+	MutexLock lock(self->debug_info_mutex);
+	for (const ShaderDebugInfoBlob &blob : self->debug_info_blobs) {
+		if (blob.id0 == id->id[0] && blob.id1 == id->id[1]) {
+			set_debug_info(blob.data.ptr(), blob.data.size());
+			print_line(String("Aftermath: debug info lookup HIT id=") + id_str + " (" + itos(blob.data.size()) + " bytes)");
+			return;
+		}
+	}
+	print_line(String("Aftermath: debug info lookup MISS id=") + id_str + " (have " + itos(self->debug_info_blobs.size()) + " registered)");
+}
+
+void AftermathContext::_cb_shader_source_debug_info_lookup(const void *, void *, void *) {
+	// Source-debug-info is keyed by a separate ShaderDebugName (used with
+	// externally stripped source, e.g. DXIL PDBs). We embed debug info directly
+	// in the SPIR-V, so there is nothing to serve on this path.
 }
 
 #undef AM_CALL

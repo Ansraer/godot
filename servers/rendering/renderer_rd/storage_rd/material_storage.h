@@ -269,6 +269,7 @@ private:
 	struct Material;
 
 	struct Shader {
+		Mutex *mutex = nullptr;
 		ShaderData *data = nullptr;
 		String code;
 		// Same source preprocessed with `RT=1`. Set by `shader_set_code_rt`.

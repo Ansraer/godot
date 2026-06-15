@@ -60,6 +60,7 @@ void EditorSceneTabs::_notification(int p_what) {
 			scene_tabs->add_theme_constant_override("icon_max_width", get_theme_constant(SNAME("class_icon_size"), EditorStringName(Editor)));
 
 			scene_list->set_button_icon(get_editor_theme_icon(SNAME("GuiTabMenuHl")));
+			_update_tab_titles();
 
 			scene_tab_add->set_button_icon(get_editor_theme_icon(SNAME("Add")));
 			scene_tab_add->add_theme_color_override("icon_normal_color", Color(0.6f, 0.6f, 0.6f, 0.8f));
@@ -502,7 +503,7 @@ EditorSceneTabs::EditorSceneTabs() {
 	scene_list->get_popup()->set_search_bar_enabled(true);
 	scene_list->get_popup()->set_search_bar_min_item_count(10);
 	scene_list->get_popup()->connect("about_to_popup", callable_mp(this, &EditorSceneTabs::_update_scene_list));
-	scene_list->get_popup()->connect(SceneStringName(id_pressed), callable_mp(this, &EditorSceneTabs::_scene_tab_changed));
+	scene_list->get_popup()->connect(SceneStringName(id_pressed), callable_mp(this, &EditorSceneTabs::set_current_tab));
 	tabbar_container->add_child(scene_list);
 
 	// On-hover tab preview.

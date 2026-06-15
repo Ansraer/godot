@@ -194,6 +194,7 @@ private:
 		CacheMode cache_mode = CACHE_MODE_REUSE;
 		Error error = OK;
 		Ref<Resource> resource;
+		LocalVector<Ref<Resource>> resource_dependencies; // We need to keep these alive for as long as the task is alive at least.
 		ThreadLoadTask *parent_task = nullptr;
 		HashSet<String> sub_tasks;
 
@@ -202,6 +203,7 @@ private:
 		bool in_progress_check : 1; // Measure against recursion cycles in progress reporting. Cycles are not expected, but can happen due to how it's currently implemented.
 		bool use_sub_threads : 1;
 		bool started_load : 1;
+		bool finished_load : 1;
 		bool connections_propagated : 1;
 
 		struct ResourceChangedConnection {
@@ -217,6 +219,7 @@ private:
 				in_progress_check(false),
 				use_sub_threads(false),
 				started_load(false),
+				finished_load(false),
 				connections_propagated(false) {}
 	};
 	static void _run_load_task(void *p_userdata);
@@ -230,6 +233,8 @@ private:
 	friend SafeBinaryMutex<BINARY_MUTEX_TAG> &_get_res_loader_mutex();
 
 	static HashMap<String, ThreadLoadTask> thread_load_tasks;
+	static HashMap<int, String> thread_waiting_on;
+	static LocalVector<int> yielders;
 	static bool cleaning_tasks;
 
 	static HashMap<String, LoadToken *> user_load_tokens;

@@ -615,7 +615,7 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 				break;
 			}
 			if (editor_selection->get_selection().size() > 1) {
-				if (!_validate_no_foreign()) {
+				if (!_validate_no_foreign_selected(editor_selection->get_top_selected_node_list())) {
 					break;
 				}
 				rename_dialog->popup_centered();
@@ -627,7 +627,7 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 			}
 			Tree *tree = scene_tree->get_scene_tree();
 			if (tree->is_anything_selected()) {
-				if (!_validate_no_foreign()) {
+				if (!_validate_no_foreign_selected(editor_selection->get_top_selected_node_list())) {
 					break;
 				}
 				tree->grab_focus(!tree->has_focus(true));
@@ -635,7 +635,7 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 			}
 		} break;
 		case TOOL_REPARENT_TO_NEW_NODE:
-			if (!_validate_no_foreign()) {
+			if (!_validate_no_foreign_selected(editor_selection->get_top_selected_node_list())) {
 				break;
 			}
 			[[fallthrough]];
@@ -708,7 +708,7 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 		} break;
 		case TOOL_CUT:
 		case TOOL_COPY: {
-			if (!edited_scene || (p_tool == TOOL_CUT && !_validate_no_foreign())) {
+			if (!edited_scene || (p_tool == TOOL_CUT && !_validate_no_foreign_selected(editor_selection->get_top_selected_node_list()))) {
 				break;
 			}
 
@@ -782,7 +782,7 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 				break;
 			}
 
-			if (!_validate_no_foreign()) {
+			if (!_validate_no_foreign_selected(editor_selection->get_top_selected_node_list())) {
 				break;
 			}
 
@@ -800,11 +800,13 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 				break;
 			}
 
-			if (!_validate_no_foreign()) {
+			List<Node *> full_selection = editor_selection->get_full_selected_node_list();
+
+			if (!_validate_no_foreign_selected(full_selection)) {
 				break;
 			}
 
-			if (!_validate_no_instance()) {
+			if (!_validate_no_instance_selected(full_selection)) {
 				break;
 			}
 
@@ -883,14 +885,14 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 				break;
 			}
 
-			if (!_validate_no_foreign()) {
+			List<Node *> selection = editor_selection->get_full_selected_node_list();
+			if (!_validate_no_foreign_selected(selection)) {
 				break;
 			}
 
 			bool MOVING_DOWN = (p_tool == TOOL_MOVE_DOWN);
 			bool MOVING_UP = !MOVING_DOWN;
 
-			List<Node *> selection = editor_selection->get_full_selected_node_list();
 			selection.sort_custom<Node::Comparator>(); // sort by index
 			if (MOVING_DOWN) {
 				selection.reverse();
@@ -1055,7 +1057,7 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 				break;
 			}
 
-			if (!_validate_no_foreign()) {
+			if (!_validate_no_foreign_selected(editor_selection->get_top_selected_node_list())) {
 				break;
 			}
 
@@ -1164,7 +1166,7 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 				return;
 			}
 
-			if (!_validate_no_foreign()) {
+			if (!_validate_no_foreign_selected(editor_selection->get_top_selected_node_list())) {
 				break;
 			}
 
@@ -1311,8 +1313,7 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 			}
 		} break;
 		case TOOL_OPEN_DOCUMENTATION: {
-			const List<Node *> selection = editor_selection->get_top_selected_node_list();
-			for (const Node *node : selection) {
+			for (const Node *node : editor_selection->get_full_selected_node_list()) {
 				String class_name;
 				Ref<Script> script_base = node->get_script();
 				while (script_base.is_valid()) {
@@ -1378,7 +1379,7 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 				break;
 			}
 
-			if (!_validate_no_foreign()) {
+			if (!_validate_no_foreign_selected(editor_selection->get_top_selected_node_list())) {
 				break;
 			}
 
@@ -1413,7 +1414,7 @@ void SceneTreeDock::_tool_selected(int p_tool, bool p_confirm_override) {
 				break;
 			}
 
-			if (!_validate_no_foreign()) {
+			if (!_validate_no_foreign_selected(editor_selection->get_top_selected_node_list())) {
 				break;
 			}
 
@@ -2401,10 +2402,8 @@ void SceneTreeDock::_node_prerenamed(Node *p_node, const String &p_new_name) {
 	perform_node_renames(nullptr, &path_renames);
 }
 
-bool SceneTreeDock::_validate_no_foreign() {
-	const List<Node *> selection = editor_selection->get_top_selected_node_list();
-
-	for (Node *E : selection) {
+bool SceneTreeDock::_validate_no_foreign_selected(const List<Node *> &p_selected) {
+	for (Node *E : p_selected) {
 		if (E != edited_scene && E->get_owner() != edited_scene) {
 			accept->set_text(TTR("Can't operate on nodes from a foreign scene!"));
 			accept->popup_centered();
@@ -2430,10 +2429,8 @@ bool SceneTreeDock::_validate_no_foreign() {
 	return true;
 }
 
-bool SceneTreeDock::_validate_no_instance() {
-	const List<Node *> selection = editor_selection->get_top_selected_node_list();
-
-	for (Node *E : selection) {
+bool SceneTreeDock::_validate_no_instance_selected(const List<Node *> &p_selected) {
+	for (Node *E : p_selected) {
 		if (E != edited_scene && E->is_instance()) {
 			accept->set_text(TTR("This operation can't be done on instantiated scenes."));
 			accept->popup_centered();
@@ -3127,13 +3124,13 @@ void SceneTreeDock::_create() {
 		_do_create(parent);
 
 	} else if (current_option == TOOL_CHANGE_TYPE) {
-		const List<Node *> selection = editor_selection->get_top_selected_node_list();
-		ERR_FAIL_COND(selection.is_empty());
+		const List<Node *> full_selection = editor_selection->get_full_selected_node_list();
+		ERR_FAIL_COND(full_selection.is_empty());
 
 		EditorUndoRedoManager *ur = EditorUndoRedoManager::get_singleton();
-		ur->create_action(TTR("Change type of node(s)"), UndoRedo::MERGE_DISABLE, selection.front()->get());
+		ur->create_action(TTR("Change type of node(s)"), UndoRedo::MERGE_DISABLE, full_selection.front()->get());
 
-		for (Node *n : selection) {
+		for (Node *n : full_selection) {
 			ERR_FAIL_NULL(n);
 
 			Variant c = create_dialog->instantiate_selected();
@@ -3178,6 +3175,9 @@ void SceneTreeDock::_create() {
 				} else if (smaller_path_to_top == path_length) {
 					if (only_one_top_node && top_node->get_parent() != n->get_parent()) {
 						only_one_top_node = false;
+					}
+					if (only_one_top_node && n->get_index(false) < top_node->get_index(false)) {
+						top_node = n;
 					}
 					if (center_parent) {
 						top_level_nodes.append(n);
@@ -3790,7 +3790,7 @@ void SceneTreeDock::_script_dropped(const String &p_file, NodePath p_to) {
 }
 
 void SceneTreeDock::_nodes_dragged(const Array &p_nodes, NodePath p_to, int p_type) {
-	if (!_validate_no_foreign()) {
+	if (!_validate_no_foreign_selected(editor_selection->get_top_selected_node_list())) {
 		return;
 	}
 
@@ -3857,8 +3857,8 @@ void SceneTreeDock::_tree_rmb(const Vector2 &p_menu_pos) {
 	ERR_FAIL_COND(!EditorNode::get_singleton()->get_edited_scene());
 	menu->clear(false);
 
-	const List<Node *> selection = editor_selection->get_top_selected_node_list();
-	List<Node *> full_selection = editor_selection->get_full_selected_node_list(); // Above method only returns nodes with common parent.
+	const List<Node *> selection = editor_selection->get_top_selected_node_list(); // Only the top-level selected nodes.
+	List<Node *> full_selection = editor_selection->get_full_selected_node_list(); // All selected nodes.
 
 	scene_tree->get_scene_tree()->grab_focus(true);
 
@@ -3935,7 +3935,7 @@ void SceneTreeDock::_tree_rmb(const Vector2 &p_menu_pos) {
 	bool can_replace = true;
 
 	if (profile_allow_editing) {
-		for (Node *E : selection) {
+		for (Node *E : full_selection) {
 			if (E != edited_scene && (E->get_owner() != edited_scene || E->is_instance())) {
 				can_replace = false;
 				if (!E->is_instance()) {
@@ -3958,20 +3958,26 @@ void SceneTreeDock::_tree_rmb(const Vector2 &p_menu_pos) {
 		BEGIN_SECTION()
 		menu->add_icon_shortcut(get_editor_theme_icon(SNAME("ActionCut")), ED_GET_SHORTCUT("scene_tree/cut_node"), TOOL_CUT);
 		menu->add_icon_shortcut(get_editor_theme_icon(SNAME("ActionCopy")), ED_GET_SHORTCUT("scene_tree/copy_node"), TOOL_COPY);
+
 		if (!node_clipboard.is_empty()) {
+			bool is_paste_icon_added = false; // Only add an icon to the first "paste" option.
+
 			if (selection.size() == 1) {
 				menu->add_icon_shortcut(get_editor_theme_icon(SNAME("ActionPaste")), ED_GET_SHORTCUT("scene_tree/paste_node"), TOOL_PASTE);
-				menu->add_shortcut(ED_GET_SHORTCUT("scene_tree/paste_node_as_sibling"), TOOL_PASTE_AS_SIBLING);
-				if (selection.front()->get() == edited_scene) {
-					menu->set_item_disabled(-1, true);
+				is_paste_icon_added = true;
+
+				if (selection.front()->get() != edited_scene) {
+					menu->add_shortcut(ED_GET_SHORTCUT("scene_tree/paste_node_as_sibling"), TOOL_PASTE_AS_SIBLING);
 				}
 			}
+
 			if (selection.size() >= 1) {
-				if (can_rename || can_replace) {
+				if ((selection.front()->get() != edited_scene) && (can_rename || can_replace)) {
 					menu->add_shortcut(ED_GET_SHORTCUT("scene_tree/paste_node_as_replacement"), TOOL_PASTE_AS_REPLACEMENT);
-				}
-				if (selection.front()->get() == edited_scene) {
-					menu->set_item_disabled(-1, true);
+					if (!is_paste_icon_added) {
+						menu->set_item_icon(-1, get_editor_theme_icon(SNAME("ActionPaste")));
+						is_paste_icon_added = true;
+					}
 				}
 			}
 		}
