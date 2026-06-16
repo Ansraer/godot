@@ -2727,6 +2727,7 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, RT_L
 	RendererRD::LightStorage *ls = RendererRD::LightStorage::get_singleton();
 	const Transform3D &cam_xform = p_render_data->scene_data->cam_transform;
 	const Vector3 cam_pos = cam_xform.origin;
+	const Vector3 cam_forward = -cam_xform.basis.get_column(2).normalized(); // -Z is forward in Godot.
 
 	// Compute light energy matching rasterizer conventions (light_storage.cpp).
 	// Applies PI multiplier (or physical-unit intensity), exposure, and negative sign.
@@ -2757,16 +2758,35 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, RT_L
 
 	LocalVector<LightScore> positional_lights;
 
+	// Lights behind the camera are deprioritized. The penalty ramps in linearly
+	// over BEHIND_FRUSTUM_BUFFER_M so nearby behind-camera lights aren't punished harshly.
+	// At or in front of the camera plane: no penalty. Beyond the buffer: full penalty.
+	static const float BEHIND_FRUSTUM_PENALTY = 0.05f;
+	static const float BEHIND_FRUSTUM_BUFFER_M = 20.0f;
+
 	// Helper: score a positional light and add to candidates.
 	auto score_positional_light = [&](RID light_instance) {
 		RID base = ls->light_instance_get_base_light(light_instance);
 		Transform3D xform = ls->light_instance_get_base_transform(light_instance);
 		Vector3 light_pos = xform.origin;
-		float dist_sq = cam_pos.distance_squared_to(light_pos);
+		Vector3 to_light = light_pos - cam_pos;
+		float dist_sq = MAX(to_light.dot(to_light), 0.01f);
 		Color color = ls->light_get_color(base);
 		float energy = ls->light_get_param(base, RSE::LIGHT_PARAM_ENERGY);
 		float lum = color.r * 0.2126f + color.g * 0.7152f + color.b * 0.0722f;
-		float score = (energy * lum) / MAX(dist_sq, 0.01f);
+
+		// Range factor: strongly prefer lights with a large influence radius.
+		// Lights with no range limit (range == 0) are treated as infinite.
+		float range = ls->light_get_param(base, RSE::LIGHT_PARAM_RANGE);
+		float range_factor = (range > 0.0f) ? (range * range) : 1.0e12f;
+
+		// Signed depth of the light along the camera forward axis (world units).
+		// Positive = in front, negative = behind. Ramp penalty in over the buffer zone.
+		float forward_depth = to_light.dot(cam_forward);
+		float t = CLAMP((forward_depth + BEHIND_FRUSTUM_BUFFER_M) / BEHIND_FRUSTUM_BUFFER_M, 0.0f, 1.0f);
+		float frustum_factor = Math::lerp(BEHIND_FRUSTUM_PENALTY, 1.0f, t);
+
+		float score = (energy * lum * range_factor * frustum_factor) / dist_sq;
 
 		LightScore ls_entry = {};
 		ls_entry.light_instance = light_instance;
