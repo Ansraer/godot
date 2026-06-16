@@ -60,7 +60,6 @@
 #include "editor/scene/3d/gizmos/cpu_particles_3d_gizmo_plugin.h"
 #include "editor/scene/3d/gizmos/decal_gizmo_plugin.h"
 #include "editor/scene/3d/gizmos/fog_volume_gizmo_plugin.h"
-#include "editor/scene/3d/gizmos/rt_procedural_instance_3d_gizmo_plugin.h"
 #include "editor/scene/3d/gizmos/geometry_instance_3d_gizmo_plugin.h"
 #include "editor/scene/3d/gizmos/gpu_particles_3d_gizmo_plugin.h"
 #include "editor/scene/3d/gizmos/gpu_particles_collision_3d_gizmo_plugin.h"

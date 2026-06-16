@@ -36,9 +36,6 @@
 #include "core/os/os.h"
 #include "drivers/streamline/streamline.h"
 #include "servers/display/display_server.h"
-
-#include "drivers/streamline/streamline.h"
-
 #include "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h"
 #include "servers/rendering/renderer_rd/forward_mobile/render_forward_mobile.h"
 #include "servers/rendering/rendering_server_types.h"
