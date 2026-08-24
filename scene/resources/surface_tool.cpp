@@ -44,6 +44,7 @@ SurfaceTool::GenerateRemapFunc SurfaceTool::generate_remap_func = nullptr;
 SurfaceTool::RemapVertexFunc SurfaceTool::remap_vertex_func = nullptr;
 SurfaceTool::RemapIndexFunc SurfaceTool::remap_index_func = nullptr;
 SurfaceTool::GenerateTangentsFunc SurfaceTool::generate_tangents_func = nullptr;
+SurfaceTool::BuildMeshletLodDagFunc SurfaceTool::build_meshlet_lod_dag_func = nullptr;
 
 void SurfaceTool::strip_mesh_arrays(PackedVector3Array &r_vertices, PackedInt32Array &r_indices) {
 	ERR_FAIL_COND_MSG(!generate_remap_func || !remap_vertex_func || !remap_index_func, "Meshoptimizer library is not initialized.");

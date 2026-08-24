@@ -14,9 +14,11 @@ thirdparty_dir = "#thirdparty/meshoptimizer/"
 thirdparty_sources = [
     "allocator.cpp",
     "clusterizer.cpp",
+    "clusterlod.cpp",
     "indexanalyzer.cpp",
     "indexcodec.cpp",
     "indexgenerator.cpp",
+    "meshletutils.cpp",
     "overdrawoptimizer.cpp",
     "partition.cpp",
     "quantization.cpp",

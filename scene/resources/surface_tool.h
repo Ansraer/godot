@@ -97,6 +97,29 @@ public:
 		TANGENT_COMPATIBLE = 1 << 0, // From meshopt_TangentCompatible
 	};
 
+	struct Meshlet {
+		uint32_t vertex_offset;
+		uint32_t triangle_offset;
+		uint32_t vertex_count;
+		uint32_t triangle_count;
+		uint32_t own_group_id; // 0xFFFFFFFF for base clusters.
+		uint32_t parent_group_id; // 0xFFFFFFFF only for roots.
+	};
+
+	struct MeshletGroup {
+		float sphere_center[3];
+		float sphere_radius;
+		float error;
+	};
+
+	struct MeshletBuilderOutput {
+		Vector<Meshlet> meshlets;
+		Vector<uint32_t> meshlet_vertices;
+		Vector<uint8_t> meshlet_triangles;
+		//Vector<MeshoptBounds> meshlet_bounds;
+		Vector<MeshletGroup> groups;
+	};
+
 	typedef void (*OptimizeVertexCacheFunc)(unsigned int *destination, const unsigned int *indices, size_t index_count, size_t vertex_count);
 	static OptimizeVertexCacheFunc optimize_vertex_cache_func;
 	typedef size_t (*OptimizeVertexFetchRemapFunc)(unsigned int *destination, const unsigned int *indices, size_t index_count, size_t vertex_count);
@@ -116,6 +139,8 @@ public:
 	typedef void (*GenerateTangentsFunc)(float *result, const unsigned int *indices, size_t index_count, const float *vertex_positions, size_t vertex_count, size_t vertex_positions_stride, const float *vertex_normals, size_t vertex_normals_stride, const float *vertex_uvs, size_t vertex_uvs_stride, unsigned int options);
 	static GenerateTangentsFunc generate_tangents_func;
 	static void strip_mesh_arrays(PackedVector3Array &r_vertices, PackedInt32Array &r_indices);
+	typedef bool (*BuildMeshletLodDagFunc)(const float *p_vertex_pos, size_t p_vertex_count, size_t p_vertex_pos_stride, const float *p_vertex_attr, size_t p_vertex_attr_stride, size_t p_attr_count, const float *p_attr_weights, const uint32_t *p_indices, size_t p_index_count, uint32_t p_max_vertices, uint32_t p_max_triangles, MeshletBuilderOutput *r_out);
+	static BuildMeshletLodDagFunc build_meshlet_lod_dag_func;
 
 private:
 	struct VertexHasher {
