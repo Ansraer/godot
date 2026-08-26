@@ -1579,6 +1579,35 @@ Array ArrayMesh::_get_surfaces() const {
 			data["2d"] = true;
 		}
 
+		if (meshlets_enabled) {
+			RenderingServerTypes::MeshletSurfaceData meshlet_surface = RS::get_singleton()->mesh_get_meshlet_surface(mesh, i);
+			if (meshlet_surface.meshlet_count > 0) {
+				Dictionary md;
+				md["version"] = 1;
+				md["meshlet_count"] = meshlet_surface.meshlet_count;
+				md["lod_group_count"] = meshlet_surface.lod_group_count;
+
+				Vector<uint8_t> meshlets_bytes;
+				meshlets_bytes.resize(meshlet_surface.meshlets.size() * sizeof(RenderingServerTypes::Meshlet));
+				memcpy(meshlets_bytes.ptrw(), meshlet_surface.meshlets.ptr(), meshlets_bytes.size());
+				md["meshlets"] = meshlets_bytes;
+
+				Vector<uint8_t> lod_groups_bytes;
+				lod_groups_bytes.resize(meshlet_surface.lod_groups.size() * sizeof(RenderingServerTypes::MeshletLodGroup));
+				memcpy(lod_groups_bytes.ptrw(), meshlet_surface.lod_groups.ptr(), lod_groups_bytes.size());
+				md["lod_groups"] = lod_groups_bytes;
+
+				Vector<uint8_t> vertices_bytes;
+				vertices_bytes.resize(meshlet_surface.meshlet_vertices.size() * sizeof(uint32_t));
+				memcpy(vertices_bytes.ptrw(), meshlet_surface.meshlet_vertices.ptr(), vertices_bytes.size());
+				md["meshlet_vertices"] = vertices_bytes;
+
+				md["meshlet_triangles"] = meshlet_surface.meshlet_triangles;
+
+				data["meshlets"] = md;
+			}
+		}
+
 		ret.push_back(data);
 	}
 
@@ -1599,6 +1628,8 @@ void ArrayMesh::_set_surfaces(const Array &p_surfaces) {
 	Vector<Ref<Material>> surface_materials;
 	Vector<String> surface_names;
 	Vector<bool> surface_2d;
+	Vector<RenderingServerTypes::MeshletSurfaceData> meshlet_surface_data;
+	Vector<bool> meshlet_surface_available;
 
 	for (int i = 0; i < p_surfaces.size(); i++) {
 		RenderingServerTypes::SurfaceData surface;
@@ -1682,10 +1713,40 @@ void ArrayMesh::_set_surfaces(const Array &p_surfaces) {
 		}
 #endif
 
+		RenderingServerTypes::MeshletSurfaceData meshlet_surface;
+		bool has_meshlet_surface = false;
+		if (d.has("meshlets")) {
+			Dictionary md = d["meshlets"];
+			// Only accept payloads matching the current on-disk layout.
+			int version = md.has("version") ? int(md["version"]) : 0;
+			if (version == 1) {
+				meshlet_surface.meshlet_count = (uint32_t)(int)md.get("meshlet_count", 0);
+				meshlet_surface.lod_group_count = (uint32_t)(int)md.get("lod_group_count", 0);
+
+				Vector<uint8_t> meshlets_bytes = md.get("meshlets", Vector<uint8_t>());
+				meshlet_surface.meshlets.resize(meshlets_bytes.size() / sizeof(RenderingServerTypes::Meshlet));
+				memcpy(meshlet_surface.meshlets.ptrw(), meshlets_bytes.ptr(), meshlets_bytes.size());
+
+				Vector<uint8_t> lod_groups_bytes = md.get("lod_groups", Vector<uint8_t>());
+				meshlet_surface.lod_groups.resize(lod_groups_bytes.size() / sizeof(RenderingServerTypes::MeshletLodGroup));
+				memcpy(meshlet_surface.lod_groups.ptrw(), lod_groups_bytes.ptr(), lod_groups_bytes.size());
+
+				Vector<uint8_t> vertices_bytes = md.get("meshlet_vertices", Vector<uint8_t>());
+				meshlet_surface.meshlet_vertices.resize(vertices_bytes.size() / sizeof(uint32_t));
+				memcpy(meshlet_surface.meshlet_vertices.ptrw(), vertices_bytes.ptr(), vertices_bytes.size());
+
+				meshlet_surface.meshlet_triangles = md.get("meshlet_triangles", Vector<uint8_t>());
+
+				has_meshlet_surface = meshlet_surface.meshlet_count > 0;
+			}
+		}
+
 		surface_data.push_back(surface);
 		surface_materials.push_back(material);
 		surface_names.push_back(surf_name);
 		surface_2d.push_back(_2d);
+		meshlet_surface_data.push_back(meshlet_surface);
+		meshlet_surface_available.push_back(has_meshlet_surface);
 	}
 
 	if (mesh.is_valid()) {
@@ -1726,6 +1787,16 @@ void ArrayMesh::_set_surfaces(const Array &p_surfaces) {
 
 		surfaces.push_back(s);
 	}
+
+	if (meshlets_enabled) {
+		for (int i = 0; i < surface_data.size(); i++) {
+			if (meshlet_surface_available[i]) {
+				RS::get_singleton()->mesh_add_meshlet_surface(mesh, i, meshlet_surface_data[i]);
+			} else {
+				_rebake_meshlets_for_surface(i);
+			}
+		}
+	}
 }
 
 bool ArrayMesh::_get(const StringName &p_name, Variant &r_ret) const {
@@ -1759,6 +1830,7 @@ void ArrayMesh::reset_state() {
 	aabb = AABB();
 	blend_shape_mode = BLEND_SHAPE_MODE_RELATIVE;
 	custom_aabb = AABB();
+	meshlets_enabled = false;
 }
 
 void ArrayMesh::_get_property_list(List<PropertyInfo> *p_list) const {
@@ -1821,6 +1893,10 @@ void ArrayMesh::add_surface(BitField<ArrayFormat> p_format, PrimitiveType p_prim
 	sd.uv_scale = p_uv_scale;
 
 	RenderingServer::get_singleton()->mesh_add_surface(mesh, sd);
+
+	if (meshlets_enabled) {
+		_rebake_meshlets_for_surface(surfaces.size() - 1);
+	}
 
 	clear_cache();
 	notify_property_list_changed();
@@ -1989,12 +2065,18 @@ String ArrayMesh::surface_get_name(int p_idx) const {
 void ArrayMesh::surface_update_vertex_region(int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
 	ERR_FAIL_INDEX(p_surface, surfaces.size());
 	RS::get_singleton()->mesh_surface_update_vertex_region(mesh, p_surface, p_offset, p_data);
+	if (meshlets_enabled) {
+		_rebake_meshlets_for_surface(p_surface);
+	}
 	emit_changed();
 }
 
 void ArrayMesh::surface_update_attribute_region(int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
 	ERR_FAIL_INDEX(p_surface, surfaces.size());
 	RS::get_singleton()->mesh_surface_update_attribute_region(mesh, p_surface, p_offset, p_data);
+	if (meshlets_enabled) {
+		_rebake_meshlets_for_surface(p_surface);
+	}
 	emit_changed();
 }
 
@@ -2037,6 +2119,9 @@ void ArrayMesh::clear_surfaces() {
 void ArrayMesh::surface_remove(int p_surface) {
 	ERR_FAIL_INDEX(p_surface, surfaces.size());
 	RS::get_singleton()->mesh_surface_remove(mesh, p_surface);
+	if (meshlets_enabled) {
+		RS::get_singleton()->mesh_meshlet_surface_remove(mesh, p_surface);
+	}
 	surfaces.remove_at(p_surface);
 
 	clear_cache();
@@ -2075,6 +2160,124 @@ void ArrayMesh::regen_normal_maps() {
 		surfs.write[i]->generate_tangents();
 		surfs.write[i]->commit(Ref<ArrayMesh>(this), formats[i]);
 	}
+}
+
+bool ArrayMesh::_bake_meshlets_for_surface(int p_surface_idx, const PackedVector3Array &p_positions, const PackedVector3Array &p_normals, const PackedInt32Array &p_indices) {
+	ERR_FAIL_INDEX_V(p_surface_idx, get_surface_count(), false);
+	ERR_FAIL_COND_V(surface_get_primitive_type(p_surface_idx) != PRIMITIVE_TRIANGLES, false);
+	ERR_FAIL_NULL_V_MSG(SurfaceTool::build_meshlet_lod_dag_func, false, "Meshoptimizer library is not initialized");
+	ERR_FAIL_COND_V_MSG(p_positions.is_empty(), false, "Generating meshlets: surface has no positions");
+	ERR_FAIL_COND_V_MSG(p_indices.is_empty(), false, "Generating meshlets: surface has no index buffer");
+
+	const size_t index_count = p_indices.size();
+	const size_t vertex_count = p_positions.size();
+
+	LocalVector<unsigned int> uindices;
+	uindices.resize(index_count);
+	{
+		const int *src = p_indices.ptr();
+		for (size_t i = 0; i < index_count; i++) {
+			ERR_FAIL_COND_V(src[i] < 0 || (size_t)src[i] >= vertex_count, false);
+			uindices[i] = (unsigned int)src[i];
+		}
+	}
+
+	const float *vertex_positions = reinterpret_cast<const float *>(p_positions.ptr());
+	const size_t position_stride = sizeof(Vector3);
+
+	const float *vertex_attributes = nullptr;
+	size_t attribute_stride = 0;
+	size_t attribute_count = 0;
+	// TODO: add support for UVs (+ tangents)
+	if (p_normals.size() == p_positions.size()) {
+		vertex_attributes = reinterpret_cast<const float *>(p_normals.ptr());
+		attribute_stride = sizeof(Vector3);
+		attribute_count = 3;
+	}
+
+	// recommended normal weights
+	const float attribute_weights[3] = { 0.5f, 0.5f, 0.5f };
+
+	SurfaceTool::MeshletBuilderOutput dag;
+	if (!SurfaceTool::build_meshlet_lod_dag_func(
+				vertex_positions, vertex_count, position_stride,
+				uindices.ptr(), index_count,
+				RSE::MAX_MESHLET_VERTICES, RSE::MAX_MESHLET_TRIANGLES,
+				vertex_attributes, attribute_stride,
+				attribute_weights, attribute_count, &dag)) {
+		return false;
+	}
+	if (dag.meshlets.is_empty()) {
+		return false;
+	}
+
+	RenderingServerTypes::MeshletSurfaceData s;
+
+	static_assert(sizeof(SurfaceTool::Meshlet) == sizeof(RenderingServerTypes::Meshlet), "Meshlet layout mismatch between SurfaceTool and RenderingServerTypes");
+	s.meshlets.resize(dag.meshlets.size());
+	memcpy(s.meshlets.ptrw(), dag.meshlets.ptr(), dag.meshlets.size() * sizeof(SurfaceTool::Meshlet));
+
+	s.meshlet_vertices.resize(dag.meshlet_vertices.size());
+	memcpy(s.meshlet_vertices.ptrw(), dag.meshlet_vertices.ptr(), dag.meshlet_vertices.size() * sizeof(uint32_t));
+
+	s.meshlet_triangles.resize(dag.meshlet_triangles.size());
+	memcpy(s.meshlet_triangles.ptrw(), dag.meshlet_triangles.ptr(), dag.meshlet_triangles.size() * sizeof(uint8_t));
+
+	s.lod_groups.resize(dag.groups.size());
+	{
+		RenderingServerTypes::MeshletLodGroup *dst = s.lod_groups.ptrw();
+		for (int i = 0; i < dag.groups.size(); i++) {
+			const SurfaceTool::MeshletGroup &g = dag.groups[i];
+			dst[i] = {};
+			dst[i].sphere_center[0] = g.sphere_center[0];
+			dst[i].sphere_center[1] = g.sphere_center[1];
+			dst[i].sphere_center[2] = g.sphere_center[2];
+			dst[i].sphere_radius = g.sphere_radius;
+			dst[i].error = g.error;
+		}
+	}
+
+	s.meshlet_count = (uint32_t)s.meshlets.size();
+	s.lod_group_count = (uint32_t)s.lod_groups.size();
+
+	ERR_FAIL_COND_V(mesh.is_null(), false);
+	RS::get_singleton()->mesh_add_meshlet_surface(mesh, p_surface_idx, s);
+
+	return true;
+}
+
+void ArrayMesh::_rebake_meshlets_for_surface(int p_surface_idx) {
+	ERR_FAIL_INDEX(p_surface_idx, get_surface_count());
+	Array arrays = surface_get_arrays(p_surface_idx);
+	if (arrays.size() != RSE::ARRAY_MAX) {
+		return;
+	}
+	_bake_meshlets_for_surface(p_surface_idx, arrays[RSE::ARRAY_VERTEX], arrays[RSE::ARRAY_NORMAL], arrays[RSE::ARRAY_INDEX]);
+}
+
+void ArrayMesh::_rebake_all_meshlets() {
+	for (int i = 0; i < get_surface_count(); i++) {
+		_rebake_meshlets_for_surface(i);
+	}
+}
+
+void ArrayMesh::set_meshlets_enabled(bool p_enabled) {
+	if (meshlets_enabled == p_enabled) {
+		return;
+	}
+	meshlets_enabled = p_enabled;
+	if (meshlets_enabled) {
+		_rebake_all_meshlets();
+	} else if (mesh.is_valid()) {
+		for (int i = 0; i < get_surface_count(); i++) {
+			RS::get_singleton()->mesh_meshlet_surface_remove(mesh, i);
+		}
+	}
+	emit_changed();
+}
+
+bool ArrayMesh::get_meshlets_enabled() const {
+	return meshlets_enabled;
 }
 
 //dirty hack
@@ -2327,6 +2530,10 @@ void ArrayMesh::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_custom_aabb", "aabb"), &ArrayMesh::set_custom_aabb);
 	ClassDB::bind_method(D_METHOD("get_custom_aabb"), &ArrayMesh::get_custom_aabb);
+
+	ClassDB::bind_method(D_METHOD("set_meshlets_enabled", "enabled"), &ArrayMesh::set_meshlets_enabled);
+	ClassDB::bind_method(D_METHOD("get_meshlets_enabled"), &ArrayMesh::get_meshlets_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "meshlets_enabled"), "set_meshlets_enabled", "get_meshlets_enabled");
 
 	ClassDB::bind_method(D_METHOD("set_shadow_mesh", "mesh"), &ArrayMesh::set_shadow_mesh);
 	ClassDB::bind_method(D_METHOD("get_shadow_mesh"), &ArrayMesh::get_shadow_mesh);

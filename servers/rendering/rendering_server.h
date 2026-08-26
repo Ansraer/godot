@@ -241,6 +241,10 @@ public:
 	virtual void mesh_surface_remove(RID p_mesh, int p_surface) = 0;
 	virtual void mesh_clear(RID p_mesh) = 0;
 
+	virtual void mesh_add_meshlet_surface(RID p_mesh, int p_surface, const RenderingServerTypes::MeshletSurfaceData &p_data) {}
+	virtual void mesh_meshlet_surface_remove(RID p_mesh, int p_surface) {}
+	virtual RenderingServerTypes::MeshletSurfaceData mesh_get_meshlet_surface(RID p_mesh, int p_surface) const { return RenderingServerTypes::MeshletSurfaceData(); }
+
 	virtual RID mesh_surface_get_vertex_buffer_rd_rid(RID p_mesh, int p_surface) const = 0;
 	virtual RID mesh_surface_get_attribute_buffer_rd_rid(RID p_mesh, int p_surface) const = 0;
 	virtual RID mesh_surface_get_skin_buffer_rd_rid(RID p_mesh, int p_surface) const = 0;

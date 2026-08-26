@@ -322,6 +322,13 @@ private:
 		bool is_2d = false;
 	};
 	Vector<Surface> surfaces;
+
+	bool meshlets_enabled = false;
+
+	bool _bake_meshlets_for_surface(int p_surface_idx, const PackedVector3Array &p_positions, const PackedVector3Array &p_normals, const PackedInt32Array &p_indices);
+	void _rebake_meshlets_for_surface(int p_surface_idx);
+	void _rebake_all_meshlets();
+
 	mutable RID mesh;
 	AABB aabb;
 	BlendShapeMode blend_shape_mode = BLEND_SHAPE_MODE_RELATIVE;
@@ -391,6 +398,9 @@ public:
 	virtual RID get_rid() const override;
 
 	void regen_normal_maps();
+
+	void set_meshlets_enabled(bool p_enabled);
+	bool get_meshlets_enabled() const;
 
 	Error lightmap_unwrap(const Transform3D &p_base_transform = Transform3D(), float p_texel_size = 0.05);
 	Error lightmap_unwrap_cached(const Transform3D &p_base_transform, float p_texel_size, const Vector<uint8_t> &p_src_cache, Vector<uint8_t> &r_dst_cache, bool p_generate_cache = true);

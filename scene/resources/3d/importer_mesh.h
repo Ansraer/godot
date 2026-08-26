@@ -77,6 +77,8 @@ class ImporterMesh : public Resource {
 
 	Ref<ImporterMesh> shadow_mesh;
 
+	bool create_meshlets = false;
+
 	Size2i lightmap_size_hint;
 
 protected:
@@ -121,6 +123,9 @@ public:
 
 	void create_shadow_mesh();
 	Ref<ImporterMesh> get_shadow_mesh() const;
+
+	void set_create_meshlets(bool p_create_meshlets);
+	bool get_create_meshlets() const;
 
 	Vector<Face3> get_faces() const;
 #ifndef PHYSICS_3D_DISABLED

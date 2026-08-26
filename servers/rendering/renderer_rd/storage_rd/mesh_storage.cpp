@@ -891,7 +891,21 @@ void MeshStorage::mesh_set_shadow_mesh(RID p_mesh, RID p_shadow_mesh) {
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 }
 
+void MeshStorage::mesh_add_meshlet_surface(RID p_mesh, int p_surface, const RenderingServerTypes::MeshletSurfaceData &p_data) {
+	// FIXME: implement me: upload the meshlet surfacedata (add or overwrite!!!)
+}
+
+void MeshStorage::mesh_meshlet_surface_remove(RID p_mesh, int p_surface) {
+	// FIXME: implement me. check how this is done for regular surfacedata
+}
+
+RenderingServerTypes::MeshletSurfaceData MeshStorage::mesh_get_meshlet_surface(RID p_mesh, int p_surface) const {
+	// FIXME: implement me! Return the stored meshlet for  serialization!
+	return RenderingServerTypes::MeshletSurfaceData();
+}
+
 void MeshStorage::mesh_clear(RID p_mesh) {
+	// FIXME: also drop any meshlet payloads attached to this mesh.
 	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL(mesh);
 

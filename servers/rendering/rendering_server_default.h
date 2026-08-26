@@ -420,6 +420,10 @@ public:
 	FUNC2(mesh_surface_remove, RID, int)
 	FUNC1(mesh_clear, RID)
 
+	FUNC3(mesh_add_meshlet_surface, RID, int, const RenderingServerTypes::MeshletSurfaceData &)
+	FUNC2(mesh_meshlet_surface_remove, RID, int)
+	FUNC2RC(RenderingServerTypes::MeshletSurfaceData, mesh_get_meshlet_surface, RID, int)
+
 	FUNC2RC(RID, mesh_surface_get_vertex_buffer_rd_rid, RID, int)
 	FUNC2RC(RID, mesh_surface_get_attribute_buffer_rd_rid, RID, int)
 	FUNC2RC(RID, mesh_surface_get_skin_buffer_rd_rid, RID, int)

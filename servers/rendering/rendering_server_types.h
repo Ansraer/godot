@@ -110,6 +110,34 @@ struct SurfaceData {
 	RID material;
 };
 
+// MUST MATCH SurfaceTool::Meshlet!!! static_assert in ArrayMesh::_bake_meshlets_for_surface().
+struct Meshlet {
+	uint32_t vertex_offset;
+	uint32_t triangle_offset;
+	uint32_t vertex_count;
+	uint32_t triangle_count;
+	uint32_t own_group_id;
+	uint32_t parent_group_id;
+};
+
+struct MeshletLodGroup {
+	float sphere_center[3];
+	float sphere_radius;
+	float error;
+	float _pad[3];
+};
+
+struct MeshletSurfaceData {
+	uint32_t meshlet_count = 0;
+	uint32_t lod_group_count = 0;
+	Vector<Meshlet> meshlets;
+	Vector<MeshletLodGroup> lod_groups;
+	// Global vertex indices referenced by meshlets
+	Vector<uint32_t> meshlet_vertices;
+	// Local triangle indices padded per meshlet to MAX_MESHLET_TRIANGLES * 3
+	Vector<uint8_t> meshlet_triangles;
+};
+
 struct MeshInfo {
 	RID mesh;
 	String path;

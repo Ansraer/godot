@@ -43,6 +43,9 @@
 
 Ref<ImporterMesh> ImporterMesh::merge_importer_meshes(const TypedArray<ImporterMesh> &p_importer_meshes, const TypedArray<Transform3D> &p_relative_transforms, bool p_deduplicate_surfaces) {
 	// Setup and safety checks.
+
+	// TODO: how to we want to handle meshlet meshes here? look into create_shadow mesh? Do we even want to handle this here or after this method has been called?
+
 	const int mesh_count = p_importer_meshes.size();
 	Ref<ImporterMesh> merged_importer_mesh;
 	ERR_FAIL_COND_V(mesh_count == 0, merged_importer_mesh);
@@ -874,6 +877,7 @@ Ref<ArrayMesh> ImporterMesh::get_mesh(const Ref<ArrayMesh> &p_base) {
 			mesh->add_blend_shape(blend_shapes[i]);
 		}
 		mesh->set_blend_shape_mode(blend_shape_mode);
+		mesh->set_meshlets_enabled(create_meshlets);
 		for (int i = 0; i < surfaces.size(); i++) {
 			Array bs_data;
 			if (surfaces[i].blend_shape_data.size()) {
@@ -900,6 +904,7 @@ Ref<ArrayMesh> ImporterMesh::get_mesh(const Ref<ArrayMesh> &p_base) {
 		mesh->set_lightmap_size_hint(lightmap_size_hint);
 
 		if (shadow_mesh.is_valid()) {
+			shadow_mesh->set_create_meshlets(create_meshlets);
 			Ref<ArrayMesh> shadow = shadow_mesh->get_mesh();
 			mesh->set_shadow_mesh(shadow);
 		}
@@ -1544,6 +1549,14 @@ Size2i ImporterMesh::get_lightmap_size_hint() const {
 	return lightmap_size_hint;
 }
 
+void ImporterMesh::set_create_meshlets(bool p_create_meshlets) {
+	create_meshlets = p_create_meshlets;
+}
+
+bool ImporterMesh::get_create_meshlets() const {
+	return create_meshlets;
+}
+
 void ImporterMesh::_bind_methods() {
 	ClassDB::bind_static_method("ImporterMesh", D_METHOD("merge_importer_meshes", "importer_meshes", "relative_transforms", "deduplicate_surfaces"), &ImporterMesh::merge_importer_meshes, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("add_blend_shape", "name"), &ImporterMesh::add_blend_shape);
@@ -1579,6 +1592,9 @@ void ImporterMesh::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_lightmap_size_hint", "size"), &ImporterMesh::set_lightmap_size_hint);
 	ClassDB::bind_method(D_METHOD("get_lightmap_size_hint"), &ImporterMesh::get_lightmap_size_hint);
+
+	ClassDB::bind_method(D_METHOD("set_create_meshlets", "create_meshlets"), &ImporterMesh::set_create_meshlets);
+	ClassDB::bind_method(D_METHOD("get_create_meshlets"), &ImporterMesh::get_create_meshlets);
 
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "_data", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL), "_set_data", "_get_data");
 }
