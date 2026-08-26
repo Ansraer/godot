@@ -2118,10 +2118,11 @@ void ArrayMesh::clear_surfaces() {
 
 void ArrayMesh::surface_remove(int p_surface) {
 	ERR_FAIL_INDEX(p_surface, surfaces.size());
-	RS::get_singleton()->mesh_surface_remove(mesh, p_surface);
 	if (meshlets_enabled) {
 		RS::get_singleton()->mesh_meshlet_surface_remove(mesh, p_surface);
 	}
+	RS::get_singleton()->mesh_surface_remove(mesh, p_surface);
+
 	surfaces.remove_at(p_surface);
 
 	clear_cache();

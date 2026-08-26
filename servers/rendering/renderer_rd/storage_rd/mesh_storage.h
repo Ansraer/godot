@@ -141,6 +141,25 @@ private:
 
 			RID material;
 
+			uint32_t meshlet_count = 0;
+			uint32_t meshlet_lod_group_count = 0;
+
+			RID meshlet_surface_info_buffer;
+
+			RID meshlets_buffer;
+			uint32_t meshlets_buffer_size = 0;
+
+			RID meshlet_vertices_buffer;
+			uint32_t meshlet_vertices_buffer_size = 0;
+
+			RID meshlet_triangles_buffer;
+			uint32_t meshlet_triangles_buffer_size = 0;
+
+			RID lod_groups_buffer;
+			uint32_t lod_groups_buffer_size = 0;
+
+			RID meshlet_uniform_set;
+
 			uint32_t render_index = 0;
 			uint64_t render_pass = 0;
 
@@ -414,6 +433,7 @@ public:
 	virtual void mesh_add_meshlet_surface(RID p_mesh, int p_surface, const RenderingServerTypes::MeshletSurfaceData &p_data) override;
 	virtual void mesh_meshlet_surface_remove(RID p_mesh, int p_surface) override;
 	virtual RenderingServerTypes::MeshletSurfaceData mesh_get_meshlet_surface(RID p_mesh, int p_surface) const override;
+	RID mesh_get_meshlet_surface_uniform_set(RID p_mesh, int p_surface, RID p_shader);
 
 	virtual void mesh_debug_usage(List<RenderingServerTypes::MeshInfo> *r_info) override;
 

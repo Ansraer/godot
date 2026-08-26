@@ -547,6 +547,31 @@ void MeshStorage::_mesh_surface_clear(Mesh *p_mesh, int p_surface) {
 		RD::get_singleton()->free_rid(s.blend_shape_buffer);
 	}
 
+	if (s.meshlet_surface_info_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlet_surface_info_buffer);
+		s.meshlet_surface_info_buffer = RID();
+	}
+	if (s.meshlets_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlets_buffer);
+		s.meshlets_buffer = RID();
+	}
+	if (s.meshlet_vertices_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlet_vertices_buffer);
+		s.meshlet_vertices_buffer = RID();
+	}
+	if (s.meshlet_triangles_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlet_triangles_buffer);
+		s.meshlet_triangles_buffer = RID();
+	}
+	if (s.lod_groups_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.lod_groups_buffer);
+		s.lod_groups_buffer = RID();
+	}
+	if (s.meshlet_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set)) {
+		RD::get_singleton()->free_rid(s.meshlet_uniform_set);
+		s.meshlet_uniform_set = RID();
+	}
+
 	memdelete(p_mesh->surfaces[p_surface]);
 }
 
@@ -891,21 +916,229 @@ void MeshStorage::mesh_set_shadow_mesh(RID p_mesh, RID p_shadow_mesh) {
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 }
 
+// TODO: consider how to handle it when meshlets are disabled in the project settings. Ideally we don't want to upload them to the gpu in the first place, but if we turn things off here we will probably also break the import workflow :shrug:
+
 void MeshStorage::mesh_add_meshlet_surface(RID p_mesh, int p_surface, const RenderingServerTypes::MeshletSurfaceData &p_data) {
-	// FIXME: implement me: upload the meshlet surfacedata (add or overwrite!!!)
+	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
+	ERR_FAIL_NULL(mesh);
+	ERR_FAIL_UNSIGNED_INDEX((uint32_t)p_surface, mesh->surface_count);
+
+	Mesh::Surface &s = *mesh->surfaces[p_surface];
+
+	// cleanup old data
+	if (s.meshlet_surface_info_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlet_surface_info_buffer);
+		s.meshlet_surface_info_buffer = RID();
+	}
+	if (s.meshlets_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlets_buffer);
+		s.meshlets_buffer = RID();
+	}
+	if (s.meshlet_vertices_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlet_vertices_buffer);
+		s.meshlet_vertices_buffer = RID();
+	}
+	if (s.meshlet_triangles_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlet_triangles_buffer);
+		s.meshlet_triangles_buffer = RID();
+	}
+	if (s.lod_groups_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.lod_groups_buffer);
+		s.lod_groups_buffer = RID();
+	}
+
+	if (s.meshlet_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set)) {
+		RD::get_singleton()->free_rid(s.meshlet_uniform_set);
+	}
+	s.meshlet_uniform_set = RID();
+
+	if (p_data.meshlets.is_empty()) {
+		s.meshlet_count = 0;
+		s.meshlet_lod_group_count = 0;
+		s.meshlets_buffer_size = 0;
+		s.meshlet_vertices_buffer_size = 0;
+		s.meshlet_triangles_buffer_size = 0;
+		s.lod_groups_buffer_size = 0;
+		return;
+	}
+
+	//TODO: I think we can deprecate meshlet_count and lod_group_count, that information is already stored in the length of the vector
+	s.meshlet_count = p_data.meshlet_count;
+	s.meshlet_lod_group_count = p_data.lod_group_count;
+
+	s.meshlets_buffer_size = p_data.meshlet_count * sizeof(RenderingServerTypes::Meshlet);
+	s.meshlet_vertices_buffer_size = p_data.meshlet_vertices.size() * sizeof(uint32_t);
+	s.meshlet_triangles_buffer_size = p_data.meshlet_triangles.size();
+	s.lod_groups_buffer_size = p_data.lod_groups.size() * sizeof(RenderingServerTypes::MeshletLodGroup);
+
+	s.meshlets_buffer = RD::get_singleton()->storage_buffer_create(s.meshlets_buffer_size, p_data.meshlets.span().reinterpret<uint8_t>());
+	s.meshlet_vertices_buffer = RD::get_singleton()->storage_buffer_create(s.meshlet_vertices_buffer_size, p_data.meshlet_vertices.span().reinterpret<uint8_t>());
+	s.meshlet_triangles_buffer = RD::get_singleton()->storage_buffer_create(s.meshlet_triangles_buffer_size, p_data.meshlet_triangles.span().reinterpret<uint8_t>());
+	s.lod_groups_buffer = RD::get_singleton()->storage_buffer_create(s.lod_groups_buffer_size, p_data.lod_groups.span().reinterpret<uint8_t>());
+
+	uint32_t params[4];
+	params[0] = s.meshlet_count;
+	params[1] = s.meshlet_lod_group_count;
+	// TODO: check if we need all the bits of s.format!
+	params[2] = uint32_t(s.format & 0xFFFFFFFFu);
+	params[3] = uint32_t(s.format >> 32);
+	s.meshlet_surface_info_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(params), Span<uint8_t>((const uint8_t *)params, sizeof(params)));
 }
 
 void MeshStorage::mesh_meshlet_surface_remove(RID p_mesh, int p_surface) {
-	// FIXME: implement me. check how this is done for regular surfacedata
+	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
+	ERR_FAIL_NULL(mesh);
+	ERR_FAIL_UNSIGNED_INDEX((uint32_t)p_surface, mesh->surface_count);
+
+	Mesh::Surface &s = *mesh->surfaces[p_surface];
+
+	s.meshlet_count = 0;
+	s.meshlet_lod_group_count = 0;
+	s.meshlets_buffer_size = 0;
+	s.meshlet_vertices_buffer_size = 0;
+	s.meshlet_triangles_buffer_size = 0;
+	s.lod_groups_buffer_size = 0;
+
+	if (s.meshlet_surface_info_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlet_surface_info_buffer);
+		s.meshlet_surface_info_buffer = RID();
+	}
+	if (s.meshlets_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlets_buffer);
+		s.meshlets_buffer = RID();
+	}
+	if (s.meshlet_vertices_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlet_vertices_buffer);
+		s.meshlet_vertices_buffer = RID();
+	}
+	if (s.meshlet_triangles_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.meshlet_triangles_buffer);
+		s.meshlet_triangles_buffer = RID();
+	}
+	if (s.lod_groups_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(s.lod_groups_buffer);
+		s.lod_groups_buffer = RID();
+	}
+
+	if (s.meshlet_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set)) {
+		RD::get_singleton()->free_rid(s.meshlet_uniform_set);
+		s.meshlet_uniform_set = RID();
+	}
+}
+
+RID MeshStorage::mesh_get_meshlet_surface_uniform_set(RID p_mesh, int p_surface, RID p_shader) {
+	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
+	ERR_FAIL_NULL_V(mesh, RID());
+	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_surface, mesh->surface_count, RID());
+
+	Mesh::Surface &s = *mesh->surfaces[p_surface];
+	if (s.meshlet_count == 0 || p_shader.is_null()) {
+		return RID();
+	}
+	if (s.meshlet_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set)) {
+		return s.meshlet_uniform_set;
+	}
+
+	Vector<RD::Uniform> uniforms;
+
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
+		u.binding = 0;
+		u.append_id(s.meshlet_surface_info_buffer);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 1;
+		u.append_id(s.meshlets_buffer);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 2;
+		u.append_id(s.meshlet_vertices_buffer);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 3;
+		u.append_id(s.meshlet_triangles_buffer);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 4;
+		u.append_id(s.lod_groups_buffer);
+		uniforms.push_back(u);
+	}
+
+	// Actual vertex data
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 5;
+		u.append_id(s.vertex_buffer);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 6;
+		u.append_id(s.attribute_buffer.is_valid() ? s.attribute_buffer : default_rd_storage_buffer);
+		uniforms.push_back(u);
+	}
+
+	// TODO: check that this set is actually free when drawing in the forward plus renderer
+	uint32_t meshlet_uniform_set = 4;
+	s.meshlet_uniform_set = RD::get_singleton()->uniform_set_create(uniforms, p_shader, meshlet_uniform_set);
+	return s.meshlet_uniform_set;
 }
 
 RenderingServerTypes::MeshletSurfaceData MeshStorage::mesh_get_meshlet_surface(RID p_mesh, int p_surface) const {
-	// FIXME: implement me! Return the stored meshlet for  serialization!
-	return RenderingServerTypes::MeshletSurfaceData();
+	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
+	ERR_FAIL_NULL_V(mesh, RenderingServerTypes::MeshletSurfaceData());
+	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_surface, mesh->surface_count, RenderingServerTypes::MeshletSurfaceData());
+
+	Mesh::Surface &s = *mesh->surfaces[p_surface];
+
+	RenderingServerTypes::MeshletSurfaceData msd;
+	if (s.meshlet_count == 0) {
+		return msd;
+	}
+
+	msd.meshlet_count = s.meshlet_count;
+	msd.lod_group_count = s.meshlet_lod_group_count;
+
+	if (s.meshlets_buffer.is_valid()) {
+		Vector<uint8_t> data = RD::get_singleton()->buffer_get_data(s.meshlets_buffer);
+		msd.meshlets.resize(s.meshlet_count);
+		memcpy(msd.meshlets.ptrw(), data.ptr(), s.meshlets_buffer_size);
+	}
+	if (s.lod_groups_buffer.is_valid()) {
+		Vector<uint8_t> data = RD::get_singleton()->buffer_get_data(s.lod_groups_buffer);
+		msd.lod_groups.resize(s.meshlet_lod_group_count);
+		memcpy(msd.lod_groups.ptrw(), data.ptr(), s.lod_groups_buffer_size);
+	}
+	if (s.meshlet_vertices_buffer.is_valid()) {
+		Vector<uint8_t> data = RD::get_singleton()->buffer_get_data(s.meshlet_vertices_buffer);
+		msd.meshlet_vertices.resize(s.meshlet_vertices_buffer_size / sizeof(uint32_t));
+		memcpy(msd.meshlet_vertices.ptrw(), data.ptr(), s.meshlet_vertices_buffer_size);
+	}
+	if (s.meshlet_triangles_buffer.is_valid()) {
+		Vector<uint8_t> data = RD::get_singleton()->buffer_get_data(s.meshlet_triangles_buffer);
+		msd.meshlet_triangles.resize(s.meshlet_triangles_buffer_size);
+		memcpy(msd.meshlet_triangles.ptrw(), data.ptr(), s.meshlet_triangles_buffer_size);
+	}
+
+	return msd;
 }
 
 void MeshStorage::mesh_clear(RID p_mesh) {
-	// FIXME: also drop any meshlet payloads attached to this mesh.
 	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL(mesh);
 
