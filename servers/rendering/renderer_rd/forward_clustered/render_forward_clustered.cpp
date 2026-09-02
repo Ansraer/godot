@@ -942,12 +942,16 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 	RenderList *rl = &render_list[p_render_list];
 	_update_dirty_geometry_instances();
 
+	const bool meshlets_enabled = GLOBAL_GET_CACHED(bool, "rendering/meshlets/use_meshlets");
+
 	if (!p_append) {
 		rl->clear();
 		if (p_render_list == RENDER_LIST_OPAQUE) {
-			// Opaque fills motion and alpha lists.
+			// Opaque fills motion, alpha, and meshlet lists.
 			render_list[RENDER_LIST_MOTION].clear();
 			render_list[RENDER_LIST_ALPHA].clear();
+			render_list[RENDER_LIST_MESHLET].clear();
+			render_list[RENDER_LIST_MESHLET_MOTION].clear();
 		}
 	}
 
@@ -1147,8 +1151,17 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 					force_alpha = true;
 				}
 
+				// Any vertex deformation will break gpu meshlet culling
+				// inst->mesh_instance is used when skinning, blend shapes, or particle trails are enabled
+				// FLAG_USES_VERTEX_DISPLACEMENT indicates when custom vertex shaders are used
+				const bool is_meshlet_eligible = meshlets_enabled && !inst->mesh_instance.is_valid() && !(surf->flags & GeometryInstanceSurfaceDataCache::FLAG_USES_VERTEX_DISPLACEMENT) && mesh_storage->mesh_surface_has_meshlets(surf->surface);
+
 				if (!force_alpha && (surf->flags & (GeometryInstanceSurfaceDataCache::FLAG_PASS_DEPTH | GeometryInstanceSurfaceDataCache::FLAG_PASS_OPAQUE))) {
-					rl->add_element(surf);
+					if (is_meshlet_eligible) {
+						render_list[RENDER_LIST_MESHLET].add_element(surf);
+					} else {
+						rl->add_element(surf);
+					}
 				}
 
 				if (force_alpha || (surf->flags & GeometryInstanceSurfaceDataCache::FLAG_PASS_ALPHA)) {
@@ -1159,7 +1172,11 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 					}
 				} else if (p_using_motion_pass && (uses_motion || (surf->flags & GeometryInstanceSurfaceDataCache::FLAG_USES_MOTION_VECTOR))) {
 					surf->color_pass_inclusion_mask = COLOR_PASS_FLAG_MOTION_VECTORS;
-					render_list[RENDER_LIST_MOTION].add_element(surf);
+					if (is_meshlet_eligible) {
+						render_list[RENDER_LIST_MESHLET_MOTION].add_element(surf);
+					} else {
+						render_list[RENDER_LIST_MOTION].add_element(surf);
+					}
 				} else {
 					surf->color_pass_inclusion_mask = 0;
 				}
@@ -1926,11 +1943,15 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	_fill_render_list(RENDER_LIST_OPAQUE, p_render_data, PASS_MODE_COLOR, using_sdfgi, using_sdfgi || using_voxelgi, using_motion_pass);
 	render_list[RENDER_LIST_OPAQUE].sort_by_key();
 	render_list[RENDER_LIST_MOTION].sort_by_key();
+	render_list[RENDER_LIST_MESHLET].sort_by_key();
+	render_list[RENDER_LIST_MESHLET_MOTION].sort_by_key();
 	render_list[RENDER_LIST_ALPHA].sort_by_reverse_depth_and_priority();
 
 	int *render_info = p_render_data->render_info ? p_render_data->render_info->info[RSE::VIEWPORT_RENDER_INFO_TYPE_VISIBLE] : (int *)nullptr;
 	_fill_instance_data(RENDER_LIST_OPAQUE, render_info);
 	_fill_instance_data(RENDER_LIST_MOTION, render_info);
+	_fill_instance_data(RENDER_LIST_MESHLET, render_info);
+	_fill_instance_data(RENDER_LIST_MESHLET_MOTION, render_info);
 	_fill_instance_data(RENDER_LIST_ALPHA, render_info);
 
 	RD::get_singleton()->draw_command_end_label();
@@ -4216,6 +4237,10 @@ void RenderForwardClustered::_geometry_instance_add_surface_with_material(Geomet
 
 	if (p_material->shader_data->is_animated()) {
 		flags |= GeometryInstanceSurfaceDataCache::FLAG_USES_MOTION_VECTOR;
+	}
+
+	if (p_material->shader_data->uses_vertex || p_material->shader_data->uses_position || p_material->shader_data->uses_vertex_time || p_material->shader_data->uses_world_coordinates) {
+		flags |= GeometryInstanceSurfaceDataCache::FLAG_USES_VERTEX_DISPLACEMENT;
 	}
 
 	if (p_material->shader_data->stencil_enabled) {

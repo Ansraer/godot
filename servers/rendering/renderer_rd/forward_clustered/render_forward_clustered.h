@@ -80,6 +80,8 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 		RENDER_LIST_MOTION, //used for opaque objects with motion
 		RENDER_LIST_ALPHA, //used for transparent objects
 		RENDER_LIST_SECONDARY, //used for shadows and other objects
+		RENDER_LIST_MESHLET, //used for opaque meshlet objects
+		RENDER_LIST_MESHLET_MOTION, //used for opaque meshlet objects with motion
 		RENDER_LIST_MAX
 	};
 
@@ -506,6 +508,7 @@ private:
 			FLAG_USES_PARTICLE_TRAILS = 65536,
 			FLAG_USES_MOTION_VECTOR = 131072,
 			FLAG_USES_STENCIL = 262144,
+			FLAG_USES_VERTEX_DISPLACEMENT = 524288,
 		};
 
 		union {
