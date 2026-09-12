@@ -1956,6 +1956,10 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	RD::get_singleton()->draw_command_end_label();
 
+	if (GLOBAL_GET_CACHED(bool, "rendering/meshlets/use_meshlets")) {
+		_meshlet_compute();
+	}
+
 	if (!is_reflection_probe) {
 		if (using_voxelgi) {
 			depth_pass_mode = PASS_MODE_DEPTH_NORMAL_ROUGHNESS_VOXEL_GI;
@@ -5271,6 +5275,8 @@ RenderForwardClustered::RenderForwardClustered() {
 	_update_shader_quality_settings();
 	_update_global_pipeline_data_requirements_from_project();
 
+	_meshlet_culling_init();
+
 	taa = memnew(RendererRD::TAA);
 	fsr2_effect = memnew(RendererRD::FSR2Effect);
 	ss_effects = memnew(RendererRD::SSEffects);
@@ -5278,6 +5284,293 @@ RenderForwardClustered::RenderForwardClustered() {
 	motion_vectors_store = memnew(RendererRD::MotionVectorsStore);
 	mfx_temporal_effect = memnew(RendererRD::MFXTemporalEffect);
 #endif
+}
+
+void RenderForwardClustered::_meshlet_culling_init() {
+	RD *rd = RD::get_singleton();
+
+	meshlet_culling.max_draws = MAX(uint32_t(256), uint32_t(GLOBAL_GET("rendering/meshlets/max_draws_per_frame")));
+	meshlet_culling.max_meshlet_instances = MAX(uint32_t(16384), uint32_t(GLOBAL_GET("rendering/meshlets/max_meshlet_instances_per_frame")));
+
+	{
+		Vector<String> modes;
+		modes.push_back("\n");
+		meshlet_culling.cull_shader.initialize(modes);
+		meshlet_culling.cull_shader_version = meshlet_culling.cull_shader.version_create();
+		RID cull_shader_rid = meshlet_culling.cull_shader.version_get_shader(meshlet_culling.cull_shader_version, 0);
+		for (int i = 0; i < MeshletCulling::CULL_MODE_MAX; i++) {
+			Vector<RD::PipelineSpecializationConstant> specs;
+			RD::PipelineSpecializationConstant sc;
+			sc.type = RD::PIPELINE_SPECIALIZATION_CONSTANT_TYPE_INT;
+			sc.constant_id = 0;
+			sc.int_value = i;
+			specs.push_back(sc);
+			meshlet_culling.cull_pipelines[i] = rd->compute_pipeline_create(cull_shader_rid, specs);
+		}
+	}
+
+	{
+		Vector<String> modes;
+		modes.push_back("\n");
+		meshlet_culling.prefix_shader.initialize(modes);
+		meshlet_culling.prefix_shader_version = meshlet_culling.prefix_shader.version_create();
+		meshlet_culling.prefix_pipeline = rd->compute_pipeline_create(meshlet_culling.prefix_shader.version_get_shader(meshlet_culling.prefix_shader_version, 0));
+	}
+
+	RID cull_shader_rid = meshlet_culling.cull_shader.version_get_shader(meshlet_culling.cull_shader_version, 0);
+	RID prefix_shader_rid = meshlet_culling.prefix_shader.version_get_shader(meshlet_culling.prefix_shader_version, 0);
+
+	const uint32_t counter_size_bytes = meshlet_culling.max_draws * sizeof(uint32_t);
+	// DrawIndexedIndirectCommand = (5 x uint32)
+	const uint32_t indirect_commands_size_bytes = meshlet_culling.max_draws * sizeof(uint32_t) * 5;
+	// MeshletInstance is 2 x uint32 (meshlet_id, instance_id)
+	const uint32_t instances_size_bytes = meshlet_culling.max_meshlet_instances * sizeof(uint32_t) * 2;
+
+	for (uint32_t i = 0; i < MeshletCulling::RING_SIZE; i++) {
+		MeshletCulling::FrameBuffers &fb = meshlet_culling.frame_buffers[i];
+
+		fb.draw_counters = rd->storage_buffer_create(counter_size_bytes);
+		fb.prefix_sum = rd->storage_buffer_create(counter_size_bytes);
+		fb.write_cursors = rd->storage_buffer_create(counter_size_bytes);
+		// STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT also enables use as a draw-indirect source.
+		fb.indirect_cmds = rd->storage_buffer_create(indirect_commands_size_bytes, Span<uint8_t>(), RD::STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT);
+		fb.global_meshlet_instances = rd->storage_buffer_create(instances_size_bytes);
+
+		{
+			Vector<RD::Uniform> u;
+			{
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = 0;
+				ui.append_id(fb.draw_counters);
+				u.push_back(ui);
+			}
+			{
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = 1;
+				ui.append_id(fb.prefix_sum);
+				u.push_back(ui);
+			}
+			{
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = 2;
+				ui.append_id(fb.write_cursors);
+				u.push_back(ui);
+			}
+			{
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = 3;
+				ui.append_id(fb.global_meshlet_instances);
+				u.push_back(ui);
+			}
+			fb.cull_uniform_set = rd->uniform_set_create(u, cull_shader_rid, 0);
+		}
+
+		{
+			Vector<RD::Uniform> u;
+			{
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = 0;
+				ui.append_id(fb.draw_counters);
+				u.push_back(ui);
+			}
+			{
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = 1;
+				ui.append_id(fb.prefix_sum);
+				u.push_back(ui);
+			}
+			{
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = 2;
+				ui.append_id(fb.indirect_cmds);
+				u.push_back(ui);
+			}
+			fb.prefix_uniform_set = rd->uniform_set_create(u, prefix_shader_rid, 0);
+		}
+	}
+
+	meshlet_culling.enabled = true;
+}
+
+void RenderForwardClustered::_meshlet_culling_free() {
+	if (!meshlet_culling.enabled) {
+		return;
+	}
+
+	RD *rd = RD::get_singleton();
+
+	for (uint32_t i = 0; i < MeshletCulling::RING_SIZE; i++) {
+		MeshletCulling::FrameBuffers &fb = meshlet_culling.frame_buffers[i];
+		if (fb.draw_counters.is_valid()) {
+			rd->free_rid(fb.draw_counters);
+		}
+		if (fb.prefix_sum.is_valid()) {
+			rd->free_rid(fb.prefix_sum);
+		}
+		if (fb.write_cursors.is_valid()) {
+			rd->free_rid(fb.write_cursors);
+		}
+		if (fb.indirect_cmds.is_valid()) {
+			rd->free_rid(fb.indirect_cmds);
+		}
+		if (fb.global_meshlet_instances.is_valid()) {
+			rd->free_rid(fb.global_meshlet_instances);
+		}
+	}
+
+	for (int i = 0; i < MeshletCulling::CULL_MODE_MAX; i++) {
+		if (meshlet_culling.cull_pipelines[i].is_valid()) {
+			rd->free_rid(meshlet_culling.cull_pipelines[i]);
+		}
+	}
+	if (meshlet_culling.prefix_pipeline.is_valid()) {
+		rd->free_rid(meshlet_culling.prefix_pipeline);
+	}
+
+	meshlet_culling.cull_shader.version_free(meshlet_culling.cull_shader_version);
+	meshlet_culling.prefix_shader.version_free(meshlet_culling.prefix_shader_version);
+
+	meshlet_culling.enabled = false;
+}
+
+uint32_t RenderForwardClustered::_meshlet_count_draws(const RenderList &p_render_list) {
+	// TODO: I am not happy with this, ideally we could already count this in advance when creating the render list
+	// Hm, check why exactly we even have the element multiple times in the list when repeat > 0, if we just skip over the following ones
+
+	// TODO: we might need to break up large repeats, check if there are limits to the max number of instances draw_indirect can handle on some hardwares.
+	// right now we are sending all actual instances AND all lods through the instances.
+	uint32_t count = 0;
+	for (uint32_t i = 0; i < p_render_list.elements.size();) {
+		uint32_t repeat = p_render_list.element_info[i].repeat;
+		if (repeat == 0) {
+			break;
+		}
+		count++;
+		i += repeat;
+	}
+	return count;
+}
+
+void RenderForwardClustered::_meshlet_culling_run(RD::ComputeListID p_compute_list, const RenderList &p_render_list, uint32_t p_draw_id_base) {
+	if (p_render_list.elements.is_empty()) {
+		return;
+	}
+
+	RD *rd = RD::get_singleton();
+	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+	RID cull_shader_rid = meshlet_culling.cull_shader.version_get_shader(meshlet_culling.cull_shader_version, 0);
+
+	uint32_t draw_id = p_draw_id_base;
+	for (uint32_t i = 0; i < p_render_list.elements.size();) {
+		GeometryInstanceSurfaceDataCache *surf = p_render_list.elements[i];
+		uint32_t repeat = p_render_list.element_info[i].repeat;
+		if (repeat == 0) {
+			break;
+		}
+
+		RID mesh_rid = surf->owner->data->base;
+		RID uset = mesh_storage->mesh_get_meshlet_surface_uniform_set(mesh_rid, surf->surface_index, cull_shader_rid);
+
+		if (uset.is_valid()) {
+			rd->compute_list_bind_uniform_set(p_compute_list, uset, 4);
+
+			uint32_t meshlet_count = mesh_storage->mesh_surface_get_meshlet_count(surf->surface);
+
+			uint32_t push[3];
+			push[0] = draw_id;
+			push[1] = meshlet_count;
+			push[2] = repeat;
+			rd->compute_list_set_push_constant(p_compute_list, push, sizeof(push));
+
+			uint32_t gx = (meshlet_count + 63u) / 64u;
+			uint32_t gy = MIN(repeat, 65535u);
+			uint32_t gz = (repeat + 65535u - 1u) / 65535u;
+			rd->compute_list_dispatch(p_compute_list, gx, gy, gz);
+		}
+		//FIXME: uhm, what do we do if uset is not valid? Shouldn't happen, but still..
+
+		draw_id++;
+		i += repeat;
+	}
+}
+
+void RenderForwardClustered::_meshlet_compute() {
+	if (!meshlet_culling.enabled) {
+		return;
+	}
+
+	const RenderList &rl_static = render_list[RENDER_LIST_MESHLET];
+	const RenderList &rl_motion = render_list[RENDER_LIST_MESHLET_MOTION];
+
+	uint32_t static_draws = _meshlet_count_draws(rl_static);
+	uint32_t motion_draws = _meshlet_count_draws(rl_motion);
+	uint32_t num_draws = static_draws + motion_draws;
+
+	if (num_draws == 0) {
+		return;
+	}
+
+	if (num_draws > meshlet_culling.max_draws) {
+		WARN_PRINT_ONCE(vformat("Meshlet culling: draw count (%d) exceeds rendering/meshlets/max_draws_per_frame (%d). Please adjust the project setting and restart the engine.", num_draws, meshlet_culling.max_draws));
+	}
+
+	RD *rd = RD::get_singleton();
+
+	// Ring slot to match MultiUmaBuffer's frame index
+	meshlet_culling.current_slot = rd->get_frames_drawn() % MeshletCulling::RING_SIZE;
+	MeshletCulling::FrameBuffers &fb = meshlet_culling.frame_buffers[meshlet_culling.current_slot];
+
+	const uint32_t counters_size_bytes = num_draws * sizeof(uint32_t);
+
+	rd->draw_command_begin_label("Meshlet Compute");
+
+	rd->draw_command_begin_label("Meshlet Compute Setup");
+	rd->buffer_clear(fb.draw_counters, 0, counters_size_bytes);
+	rd->buffer_clear(fb.write_cursors, 0, counters_size_bytes);
+	rd->draw_command_end_label();
+
+	RD::ComputeListID cl = rd->compute_list_begin();
+
+	// STEP 1: run culling and only write count
+	rd->draw_command_begin_label("Meshlet Compute Cull (Count)");
+	rd->compute_list_bind_compute_pipeline(cl, meshlet_culling.cull_pipelines[MeshletCulling::CULL_MODE_COUNT]);
+	rd->compute_list_bind_uniform_set(cl, fb.cull_uniform_set, 0);
+	_meshlet_culling_run(cl, rl_static, 0);
+	_meshlet_culling_run(cl, rl_motion, static_draws);
+	rd->draw_command_end_label();
+
+	rd->compute_list_add_barrier(cl);
+
+	// STEP 2: prefix sum & prepare IndirectCommands for drawing
+	rd->draw_command_begin_label("Meshlet Compute PrefixSum & Indirect Commands");
+	rd->compute_list_bind_compute_pipeline(cl, meshlet_culling.prefix_pipeline);
+	rd->compute_list_bind_uniform_set(cl, fb.prefix_uniform_set, 0);
+	uint32_t prefix_push[1] = { num_draws };
+	rd->compute_list_set_push_constant(cl, prefix_push, sizeof(prefix_push));
+	rd->compute_list_dispatch(cl, 1, 1, 1);
+	rd->draw_command_end_label();
+
+	rd->compute_list_add_barrier(cl);
+
+	// STEP 3: re-run culling and write meshlet output based on prefix sum
+	// TODO: if step 1 outputs bits for every meshlet/draw whether they passed culling we could use that to avoid rerunning all the culling
+	// and avoid some alu load. Something to look into in the future...
+	rd->draw_command_begin_label("Meshlet Compute Cull (Write)");
+	rd->compute_list_bind_compute_pipeline(cl, meshlet_culling.cull_pipelines[MeshletCulling::CULL_MODE_WRITE]);
+	rd->compute_list_bind_uniform_set(cl, fb.cull_uniform_set, 0);
+	_meshlet_culling_run(cl, rl_static, 0);
+	_meshlet_culling_run(cl, rl_motion, static_draws);
+	rd->draw_command_end_label();
+
+	rd->compute_list_end();
+	rd->draw_command_end_label();
 }
 
 RenderForwardClustered::~RenderForwardClustered() {
@@ -5318,6 +5611,8 @@ RenderForwardClustered::~RenderForwardClustered() {
 	RD::get_singleton()->free_rid(dfg_lut.pipeline);
 	RD::get_singleton()->free_rid(dfg_lut.texture);
 	dfg_lut.shader.version_free(dfg_lut.shader_version);
+
+	_meshlet_culling_free();
 
 	if (ltc.lut1_texture.is_valid()) {
 		RS::get_singleton()->free_rid(ltc.lut1_texture);

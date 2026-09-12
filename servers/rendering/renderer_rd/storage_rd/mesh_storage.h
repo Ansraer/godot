@@ -491,6 +491,11 @@ public:
 		return s->meshlet_count > 0;
 	}
 
+	_FORCE_INLINE_ uint32_t mesh_surface_get_meshlet_count(void *p_surface) const {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		return s->meshlet_count;
+	}
+
 	_FORCE_INLINE_ uint32_t mesh_surface_get_vertices_drawn_count(void *p_surface) const {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 		return s->index_count ? s->index_count : s->vertex_count;

@@ -3679,6 +3679,8 @@ void RenderingServer::init() {
 	GLOBAL_DEF_RST("rendering/lights_and_shadows/use_physical_light_units", false);
 
 	GLOBAL_DEF_RST("rendering/meshlets/use_meshlets", true);
+	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/meshlets/max_draws_per_frame", PROPERTY_HINT_RANGE, "256,65536,1"), 4096);
+	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/meshlets/max_meshlet_instances_per_frame", PROPERTY_HINT_RANGE, "16384,16777216,1"), 1048576);
 
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/lights_and_shadows/directional_shadow/size", PROPERTY_HINT_RANGE, "256,16384"), 4096);
 	GLOBAL_DEF("rendering/lights_and_shadows/directional_shadow/size.mobile", 2048);

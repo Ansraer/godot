@@ -41,6 +41,8 @@
 #include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
 #include "servers/rendering/renderer_rd/shaders/forward_clustered/best_fit_normal.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/forward_clustered/integrate_dfg.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/forward_clustered/meshlet_cull.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/forward_clustered/meshlet_prefix_sum.glsl.gen.h"
 
 #ifdef METAL_ENABLED
 #include "servers/rendering/renderer_rd/effects/metal_fx.h"
@@ -198,6 +200,58 @@ private:
 		RID lut1_texture;
 		RID lut2_texture;
 	} ltc;
+
+	/*
+	Culling for meshlet rendering.
+	3 passes:
+		1.	run culling and count survivors per draw
+		2.	prefix sum and populate indirect command buffer
+		3.	re-run culling and write mershlet instance data based on prefix sum offsets
+	*/
+
+	// TODO: ask clay where I should move this. RenderSceneBuffersRD looks promising but at a glance it only contains texture buffers.
+	// Might make sense to move all the meshlet stuff into a dedicated class and file and just call the functions from here.
+	struct MeshletCulling {
+		// must match meshlet_cull.glsl
+		enum {
+			CULL_MODE_COUNT = 0,
+			CULL_MODE_WRITE = 1,
+			CULL_MODE_MAX,
+		};
+
+		enum { RING_SIZE = 3 };
+
+		MeshletCullShaderRD cull_shader;
+		RID cull_shader_version;
+		RID cull_pipelines[CULL_MODE_MAX];
+
+		MeshletPrefixSumShaderRD prefix_shader;
+		RID prefix_shader_version;
+		RID prefix_pipeline;
+
+		struct FrameBuffers {
+			RID draw_counters; // uint[max_draws], zeroed each frame before pass 1!!
+			RID prefix_sum; // uint[max_draws], written by pass 2
+			RID write_cursors; // uint[max_draws], zeroed each frame before pass 3
+			RID indirect_cmds; // DrawIndexedIndirectCommand[max_draws], written by pass 2
+			RID global_meshlet_instances; // MeshletInstance[max_meshlet_instances], written by pass 3
+
+			// Uniform sets
+			RID prefix_uniform_set;
+			RID cull_uniform_set;
+		} frame_buffers[RING_SIZE];
+
+		uint32_t current_slot = 0;
+		uint32_t max_draws = 0;
+		uint32_t max_meshlet_instances = 0;
+		bool enabled = false;
+	} meshlet_culling;
+
+	void _meshlet_culling_init();
+	void _meshlet_culling_free();
+	uint32_t _meshlet_count_draws(const RenderList &p_rl);
+	void _meshlet_culling_run(RD::ComputeListID p_cl, const RenderList &p_rl, uint32_t p_draw_id_base);
+	void _meshlet_compute();
 
 	enum PassMode {
 		PASS_MODE_COLOR,
@@ -409,7 +463,7 @@ private:
 		uint32_t max_lightmaps;
 		RID lightmap_buffer;
 
-		MultiUmaBuffer<1u> instance_buffer[RENDER_LIST_MAX] = { MultiUmaBuffer<1u>("RENDER_LIST_OPAQUE"), MultiUmaBuffer<1u>("RENDER_LIST_MOTION"), MultiUmaBuffer<1u>("RENDER_LIST_ALPHA"), MultiUmaBuffer<1u>("RENDER_LIST_SECONDARY") };
+		MultiUmaBuffer<1u> instance_buffer[RENDER_LIST_MAX] = { MultiUmaBuffer<1u>("RENDER_LIST_OPAQUE"), MultiUmaBuffer<1u>("RENDER_LIST_MOTION"), MultiUmaBuffer<1u>("RENDER_LIST_ALPHA"), MultiUmaBuffer<1u>("RENDER_LIST_SECONDARY"), MultiUmaBuffer<1u>("RENDER_LIST_MESHLET"), MultiUmaBuffer<1u>("RENDER_LIST_MESHLET_MOTION") };
 		InstanceData *curr_gpu_ptr[RENDER_LIST_MAX] = {};
 
 		LightmapCaptureData *lightmap_captures = nullptr;
