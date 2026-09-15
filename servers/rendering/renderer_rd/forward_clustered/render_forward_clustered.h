@@ -67,6 +67,8 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 		RENDER_PASS_UNIFORM_SET = 1,
 		TRANSFORMS_UNIFORM_SET = 2,
 		MATERIAL_UNIFORM_SET = 3,
+		MESHLET_SURFACE_UNIFORM_SET = 4,
+		MESHLET_FRAME_UNIFORM_SET = 5,
 	};
 
 	enum {
@@ -239,7 +241,12 @@ private:
 			// Uniform sets
 			RID prefix_uniform_set;
 			RID cull_uniform_set;
+			RID scene_meshlet_frame_uniform_set;
 		} frame_buffers[RING_SIZE];
+
+		// sets 4 and 5 for when sc_meshlets() == false (regular draw)
+		RID dummy_surface_uniform_set;
+		RID dummy_frame_uniform_set;
 
 		uint32_t current_slot = 0;
 		uint32_t max_draws = 0;

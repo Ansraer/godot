@@ -7,7 +7,7 @@
 #extension GL_KHR_shader_subgroup_ballot : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
-#include "meshlet_cull_inc.glsl"
+#include "meshlet_inc.glsl"
 
 // Switch between outputting only count for prefix sum vs actual data
 #define MODE_COUNT 0u
@@ -54,8 +54,8 @@ void main() {
 	uint meshlet_id = gl_GlobalInvocationID.x;
 	uint instance_id = gl_WorkGroupID.y + gl_WorkGroupID.z * 65535u;
 
-	if (meshlet_id >= params.meshlet_count) {
-		|| (instance_id >= params.instance_count) return;
+	if (meshlet_id >= params.meshlet_count || instance_id >= params.instance_count) {
+		return;
 	}
 
 	bool survives = in_range && meshlet_cull(meshlet_id, instance_id);

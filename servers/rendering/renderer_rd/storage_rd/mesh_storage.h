@@ -67,6 +67,7 @@ private:
 	static MeshStorage *singleton;
 
 	RID default_rd_storage_buffer;
+	RID default_rd_uniform_buffer;
 
 	/* Mesh */
 
@@ -382,6 +383,7 @@ public:
 	bool free(RID p_rid);
 
 	RID get_default_rd_storage_buffer() const { return default_rd_storage_buffer; }
+	RID get_default_rd_uniform_buffer() const { return default_rd_uniform_buffer; }
 
 	/* MESH API */
 

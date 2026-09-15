@@ -150,6 +150,10 @@ bool sc_use_lightmap_specular() {
 	return ((sc_packed_1() >> 6) & 1U) != 0;
 }
 
+bool sc_meshlets() {
+	return ((sc_packed_1() >> 7) & 1U) != 0;
+}
+
 float sc_luminance_multiplier() {
 	// Not used in clustered renderer but we share some code with the mobile renderer that requires this.
 	return 1.0;
@@ -513,5 +517,14 @@ layout(set = 2, binding = 0, std430) restrict readonly buffer Transforms {
 	vec4 data[];
 }
 transforms;
+
+/* Set 4 Surface specific meshlet data (dummy-bound for non meshlet draw) */
+#include "meshlet_inc.glsl"
+
+/* Set 5 Per-frame meshlet instances (dummy-bound for non meshlet draws) */
+layout(set = 5, binding = 0, std430) restrict readonly buffer MeshletInstancesBuffer {
+	MeshletInstance data[];
+}
+meshlet_instances;
 
 /* Set 3 User Material */

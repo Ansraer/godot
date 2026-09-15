@@ -3,7 +3,7 @@
 #define MAX_MESHLET_TRIANGLES 128
 #define MAX_MESHLET_INDICES (MAX_MESHLET_TRIANGLES * 3)
 
-// Must match RenderingServerTypes::Meshlet!
+// Must match RenderingServerTypes::Meshlet.
 struct Meshlet {
 	uint vertex_offset;
 	uint triangle_offset;
@@ -13,7 +13,7 @@ struct Meshlet {
 	uint parent_group_id;
 };
 
-// Must match RenderingServerTypes::MeshletLodGroup!!
+// Must match RenderingServerTypes::MeshletLodGroup.
 struct MeshletLodGroup {
 	// sphere coords and error
 	vec4 sphere;
@@ -24,7 +24,7 @@ struct MeshletLodGroup {
 	float _pad2;
 };
 
-// Compact post culling output
+// post culling compact output
 struct MeshletInstance {
 	uint meshlet_id;
 	uint instance_id;
@@ -51,13 +51,13 @@ layout(set = MESHLET_SURFACE_SET, binding = 1, std430) restrict readonly buffer 
 }
 meshlets;
 
+// This currently is a uint32 array, while on the cpu side we upload uint8. WHEN ACCESSING THIS WE NEED TO PROPERLY EXTRACT THE DATA WE NEED!!!!
+// TODO: look into using GL_EXT_shader_explicit_arithmetic_types_int8 and VK_KHR_8bit_storage instead.
 layout(set = MESHLET_SURFACE_SET, binding = 2, std430) restrict readonly buffer MeshletVerticesBuffer {
 	uint data[];
 }
 meshlet_vertices;
 
-// This currently is a uint32 array, while on the cpu side we upload uin8. WHEN ACCESSING THIS WE NEED TO PROBABLY EXTRACT THE DATA WE NEED!!!!
-// TODO: look into using GL_EXT_shader_explicit_arithmetic_types_int8  and VK_KHR_8bit_storage instead
 layout(set = MESHLET_SURFACE_SET, binding = 3, std430) restrict readonly buffer MeshletTrianglesBuffer {
 	uint data[];
 }
@@ -67,3 +67,13 @@ layout(set = MESHLET_SURFACE_SET, binding = 4, std430) restrict readonly buffer 
 	MeshletLodGroup data[];
 }
 lod_groups;
+
+layout(set = MESHLET_SURFACE_SET, binding = 5, std430) restrict readonly buffer MeshletVertexBuffer {
+	uint data[];
+}
+meshlet_vertex_buffer;
+
+layout(set = MESHLET_SURFACE_SET, binding = 6, std430) restrict readonly buffer MeshletAttributeBuffer {
+	uint data[];
+}
+meshlet_attribute_buffer;

@@ -46,6 +46,7 @@ MeshStorage::MeshStorage() {
 	singleton = this;
 
 	default_rd_storage_buffer = RD::get_singleton()->storage_buffer_create(sizeof(uint32_t) * 4);
+	default_rd_uniform_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(uint32_t) * 4);
 
 	//default rd buffers
 	{
@@ -196,6 +197,7 @@ MeshStorage::~MeshStorage() {
 	skeleton_shader.shader.version_free(skeleton_shader.version);
 
 	RD::get_singleton()->free_rid(default_rd_storage_buffer);
+	RD::get_singleton()->free_rid(default_rd_uniform_buffer);
 
 	singleton = nullptr;
 }

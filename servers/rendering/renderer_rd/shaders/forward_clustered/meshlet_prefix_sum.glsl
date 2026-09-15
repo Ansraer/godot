@@ -7,7 +7,7 @@
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
-#include "meshlet_cull_inc.glsl"
+#include "meshlet_inc.glsl"
 
 // Meshlet prefix sum over draw_counters[0 ... num_draws)
 // Writes the per-draw start offset into prefix_sum[] and populates the indirect draw command buffer

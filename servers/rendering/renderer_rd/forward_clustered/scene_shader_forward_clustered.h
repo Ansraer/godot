@@ -129,6 +129,7 @@ public:
 				uint32_t fog_use_legacy_blending : 1;
 				uint32_t cluster_has_area_light : 1;
 				uint32_t use_lightmap_specular : 1;
+				uint32_t use_meshlets : 1;
 			};
 		};
 

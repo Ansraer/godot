@@ -314,6 +314,10 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, p_params->render_pass_uniform_set, RENDER_PASS_UNIFORM_SET);
 	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, scene_shader.default_vec4_xform_uniform_set, TRANSFORMS_UNIFORM_SET);
 
+	// dummy meshlet uniform sets
+	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, meshlet_culling.dummy_surface_uniform_set, MESHLET_SURFACE_UNIFORM_SET);
+	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, meshlet_culling.dummy_frame_uniform_set, MESHLET_FRAME_UNIFORM_SET);
+
 	RID prev_material_uniform_set;
 
 	RID prev_vertex_array_rd;
@@ -5319,6 +5323,7 @@ void RenderForwardClustered::_meshlet_culling_init() {
 
 	RID cull_shader_rid = meshlet_culling.cull_shader.version_get_shader(meshlet_culling.cull_shader_version, 0);
 	RID prefix_shader_rid = meshlet_culling.prefix_shader.version_get_shader(meshlet_culling.prefix_shader_version, 0);
+	RID scene_shader_rid = scene_shader.default_shader_rd;
 
 	const uint32_t counter_size_bytes = meshlet_culling.max_draws * sizeof(uint32_t);
 	// DrawIndexedIndirectCommand = (5 x uint32)
@@ -5393,6 +5398,52 @@ void RenderForwardClustered::_meshlet_culling_init() {
 				u.push_back(ui);
 			}
 			fb.prefix_uniform_set = rd->uniform_set_create(u, prefix_shader_rid, 0);
+		}
+
+		{
+			Vector<RD::Uniform> u;
+			RD::Uniform ui;
+			ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+			ui.binding = 0;
+			ui.append_id(fb.global_meshlet_instances);
+			u.push_back(ui);
+			fb.scene_meshlet_frame_uniform_set = rd->uniform_set_create(u, scene_shader_rid, MESHLET_FRAME_UNIFORM_SET);
+		}
+	}
+
+	// dummy scene shader uniform sets for sc_meshlets() = false
+	{
+		RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+		RID default_storage = mesh_storage->get_default_rd_storage_buffer();
+		RID default_uniform = mesh_storage->get_default_rd_uniform_buffer();
+
+		{
+			Vector<RD::Uniform> u;
+			{
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
+				ui.binding = 0;
+				ui.append_id(default_uniform);
+				u.push_back(ui);
+			}
+			for (uint32_t b = 1; b <= 6; b++) {
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = b;
+				ui.append_id(default_storage);
+				u.push_back(ui);
+			}
+			meshlet_culling.dummy_surface_uniform_set = rd->uniform_set_create(u, scene_shader_rid, MESHLET_SURFACE_UNIFORM_SET);
+		}
+
+		{
+			Vector<RD::Uniform> u;
+			RD::Uniform ui;
+			ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+			ui.binding = 0;
+			ui.append_id(default_storage);
+			u.push_back(ui);
+			meshlet_culling.dummy_frame_uniform_set = rd->uniform_set_create(u, scene_shader_rid, MESHLET_FRAME_UNIFORM_SET);
 		}
 	}
 
@@ -5479,7 +5530,7 @@ void RenderForwardClustered::_meshlet_culling_run(RD::ComputeListID p_compute_li
 		RID uset = mesh_storage->mesh_get_meshlet_surface_uniform_set(mesh_rid, surf->surface_index, cull_shader_rid);
 
 		if (uset.is_valid()) {
-			rd->compute_list_bind_uniform_set(p_compute_list, uset, 4);
+			rd->compute_list_bind_uniform_set(p_compute_list, uset, MESHLET_SURFACE_UNIFORM_SET);
 
 			uint32_t meshlet_count = mesh_storage->mesh_surface_get_meshlet_count(surf->surface);
 
