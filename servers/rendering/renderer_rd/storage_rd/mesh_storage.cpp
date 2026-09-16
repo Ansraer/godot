@@ -46,7 +46,7 @@ MeshStorage::MeshStorage() {
 	singleton = this;
 
 	default_rd_storage_buffer = RD::get_singleton()->storage_buffer_create(sizeof(uint32_t) * 4);
-	default_rd_uniform_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(uint32_t) * 4);
+	default_rd_uniform_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(uint32_t) * 8);
 
 	//default rd buffers
 	{
@@ -978,12 +978,12 @@ void MeshStorage::mesh_add_meshlet_surface(RID p_mesh, int p_surface, const Rend
 	s.meshlet_triangles_buffer = RD::get_singleton()->storage_buffer_create(s.meshlet_triangles_buffer_size, p_data.meshlet_triangles.span().reinterpret<uint8_t>());
 	s.lod_groups_buffer = RD::get_singleton()->storage_buffer_create(s.lod_groups_buffer_size, p_data.lod_groups.span().reinterpret<uint8_t>());
 
-	uint32_t params[4];
+	uint32_t params[5];
 	params[0] = s.meshlet_count;
 	params[1] = s.meshlet_lod_group_count;
-	// TODO: check if we need all the bits of s.format!
 	params[2] = uint32_t(s.format & 0xFFFFFFFFu);
 	params[3] = uint32_t(s.format >> 32);
+	params[4] = s.vertex_count;
 	s.meshlet_surface_info_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(params), Span<uint8_t>((const uint8_t *)params, sizeof(params)));
 }
 

@@ -76,6 +76,47 @@ layout(location = 13) in vec4 previous_normal_attrib;
 
 #endif // MOTION_VECTORS
 
+// Vertex Pulling (for meshlets)
+
+uint _meshlet_global_vertex_index = 0u;
+uint _meshlet_instance_id = 0u;
+
+vec4 _vertex_pull_vertex_angle_attrib(vec4 raw) {
+	return sc_meshlets() ? meshlet_pull_position(_meshlet_global_vertex_index) : raw;
+}
+
+vec4 _vertex_pull_axis_tangent_attrib(vec4 raw) {
+	return sc_meshlets() ? meshlet_pull_normal_tangent(_meshlet_global_vertex_index) : raw;
+}
+
+vec4 _vertex_pull_color_attrib(vec4 raw) {
+	return sc_meshlets() ? meshlet_pull_color(_meshlet_global_vertex_index) : raw;
+}
+
+vec2 _vertex_pull_uv_attrib(vec2 raw) {
+	return sc_meshlets() ? meshlet_pull_uv(_meshlet_global_vertex_index) : raw;
+}
+
+vec2 _vertex_pull_uv2_attrib(vec2 raw) {
+	return sc_meshlets() ? meshlet_pull_uv2(_meshlet_global_vertex_index) : raw;
+}
+
+vec4 _vertex_pull_custom0_attrib(vec4 raw) {
+	return sc_meshlets() ? meshlet_pull_custom(0u, _meshlet_global_vertex_index) : raw;
+}
+
+vec4 _vertex_pull_custom1_attrib(vec4 raw) {
+	return sc_meshlets() ? meshlet_pull_custom(1u, _meshlet_global_vertex_index) : raw;
+}
+
+vec4 _vertex_pull_custom2_attrib(vec4 raw) {
+	return sc_meshlets() ? meshlet_pull_custom(2u, _meshlet_global_vertex_index) : raw;
+}
+
+vec4 _vertex_pull_custom3_attrib(vec4 raw) {
+	return sc_meshlets() ? meshlet_pull_custom(3u, _meshlet_global_vertex_index) : raw;
+}
+
 void axis_angle_to_tbn(vec3 axis, float angle, out vec3 tangent, out vec3 binormal, out vec3 normal) {
 	float c = cos(angle);
 	float s = sin(angle);
@@ -234,7 +275,7 @@ void vertex_shader(vec3 vertex_input,
 		out vec4 screen_pos) {
 	vec4 instance_custom = vec4(0.0);
 #if defined(COLOR_USED)
-	color_interp = color_attrib;
+	color_interp = _vertex_pull_color_attrib(color_attrib);
 #endif
 
 	mat4 inv_view_matrix = transpose(mat4(scene_data.inv_view_matrix[0],
@@ -356,11 +397,11 @@ void vertex_shader(vec3 vertex_input,
 #endif
 
 #ifdef UV_USED
-	uv_interp = uv_attrib;
+	uv_interp = _vertex_pull_uv_attrib(uv_attrib);
 #endif
 
 #if defined(UV2_USED) || defined(USE_LIGHTMAP)
-	uv2_interp = uv2_attrib;
+	uv2_interp = _vertex_pull_uv2_attrib(uv2_attrib);
 #endif
 
 	vec4 uv_scale = instances.data[instance_index].uv_scale;
@@ -684,10 +725,11 @@ void vertex_shader(vec3 vertex_input,
 #ifdef MODE_RENDER_MATERIAL
 	if (bool(scene_data.flags & SCENE_DATA_FLAGS_USE_UV2_MATERIAL)) {
 		vec2 uv_dest_attrib;
+		vec2 uv2_effective = _vertex_pull_uv2_attrib(uv2_attrib);
 		if (uv_scale != vec4(0.0)) {
-			uv_dest_attrib = (uv2_attrib.xy - 0.5) * uv_scale.zw;
+			uv_dest_attrib = (uv2_effective - 0.5) * uv_scale.zw;
 		} else {
-			uv_dest_attrib = uv2_attrib.xy;
+			uv_dest_attrib = uv2_effective;
 		}
 
 		vec2 uv_offset = unpackHalf2x16(draw_call.uv_offset);
@@ -766,8 +808,29 @@ void _unpack_vertex_attributes(vec4 p_vertex_in, vec3 p_compressed_aabb_position
 }
 
 void main() {
+	if (sc_meshlets()) {
+		uint mi_index = meshlet_prefix_sum.data[draw_call.draw_id] + uint(gl_InstanceIndex);
+		MeshletInstance mi = meshlet_instances.data[mi_index];
+		Meshlet m = meshlets.data[mi.meshlet_id];
+
+		uint tri_local = uint(gl_VertexIndex) / 3u;
+		uint v_slot = uint(gl_VertexIndex) % 3u;
+		// early abort if we are rendering more triangles than there are in the meshlet
+		if (tri_local >= m.triangle_count) {
+			gl_Position = vec4(0.0);
+			return;
+		}
+		uint tri_byte_index = (m.triangle_offset + tri_local) * 3u + v_slot;
+		uint local_vidx = meshlet_triangle_local_index(tri_byte_index);
+
+		// store state in global vars so we can reference it during vertex pulling and in macros
+		_meshlet_global_vertex_index = meshlet_vertices.data[m.vertex_offset + local_vidx];
+		_meshlet_instance_id = mi.instance_id;
+	}
+
 	uint instance_index = draw_call.instance_index;
 	if (!sc_multimesh()) {
+		// INSTANCE_INDEX macro already accounts for meshlets!
 		instance_index += INSTANCE_INDEX;
 	}
 
@@ -785,12 +848,12 @@ void main() {
 #endif
 
 	_unpack_vertex_attributes(
-			previous_vertex_attrib,
+			_vertex_pull_vertex_angle_attrib(previous_vertex_attrib),
 			instances.data[instance_index].compressed_aabb_position_pad.xyz,
 			instances.data[instance_index].compressed_aabb_size_pad.xyz,
 
 #if defined(NORMAL_USED) || defined(TANGENT_USED)
-			previous_normal_attrib,
+			_vertex_pull_axis_tangent_attrib(previous_normal_attrib),
 #ifdef NORMAL_USED
 			prev_normal,
 #endif
@@ -828,11 +891,11 @@ void main() {
 #endif
 
 	_unpack_vertex_attributes(
-			vertex_angle_attrib,
+			_vertex_pull_vertex_angle_attrib(vertex_angle_attrib),
 			instances.data[instance_index].compressed_aabb_position_pad.xyz,
 			instances.data[instance_index].compressed_aabb_size_pad.xyz,
 #if defined(NORMAL_USED) || defined(TANGENT_USED)
-			axis_tangent_attrib,
+			_vertex_pull_axis_tangent_attrib(axis_tangent_attrib),
 #ifdef NORMAL_USED
 			normal,
 #endif

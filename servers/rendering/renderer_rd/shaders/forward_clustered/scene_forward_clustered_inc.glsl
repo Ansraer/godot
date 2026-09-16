@@ -28,6 +28,7 @@ layout(push_constant, std430) uniform DrawCall {
 	uint uv_offset;
 	uint multimesh_motion_vectors_current_offset;
 	uint multimesh_motion_vectors_previous_offset;
+	uint draw_id;
 #ifdef UBERSHADER
 	uint sc_packed_0;
 	uint sc_packed_1;
@@ -163,13 +164,13 @@ layout(constant_id = 2) const bool sc_emulate_point_size = false;
 
 #ifdef POINT_SIZE_USED
 
-#define VERTEX_INDEX (sc_emulate_point_size ? gl_InstanceIndex : gl_VertexIndex)
-#define INSTANCE_INDEX (sc_emulate_point_size ? (gl_VertexIndex / 6) : gl_InstanceIndex)
+#define VERTEX_INDEX (sc_meshlets() ? _meshlet_global_vertex_index : (sc_emulate_point_size ? gl_InstanceIndex : gl_VertexIndex))
+#define INSTANCE_INDEX (sc_meshlets() ? _meshlet_instance_id : (sc_emulate_point_size ? (gl_VertexIndex / 6) : gl_InstanceIndex))
 
 #else
 
-#define VERTEX_INDEX gl_VertexIndex
-#define INSTANCE_INDEX gl_InstanceIndex
+#define VERTEX_INDEX (sc_meshlets() ? _meshlet_global_vertex_index : gl_VertexIndex)
+#define INSTANCE_INDEX (sc_meshlets() ? _meshlet_instance_id : gl_InstanceIndex)
 
 #endif
 
@@ -521,10 +522,15 @@ transforms;
 /* Set 4 Surface specific meshlet data (dummy-bound for non meshlet draw) */
 #include "meshlet_inc.glsl"
 
-/* Set 5 Per-frame meshlet instances (dummy-bound for non meshlet draws) */
+/* Set 5 Per-frame meshlet instances + prefix sum (dummy-bound for non meshlet draws) */
 layout(set = 5, binding = 0, std430) restrict readonly buffer MeshletInstancesBuffer {
 	MeshletInstance data[];
 }
 meshlet_instances;
+
+layout(set = 5, binding = 1, std430) restrict readonly buffer MeshletPrefixSumBuffer {
+	uint data[];
+}
+meshlet_prefix_sum;
 
 /* Set 3 User Material */

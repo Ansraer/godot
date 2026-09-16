@@ -777,10 +777,10 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["IRRADIANCE"] = "custom_irradiance";
 		actions.renames["BONE_INDICES"] = "bone_attrib";
 		actions.renames["BONE_WEIGHTS"] = "weight_attrib";
-		actions.renames["CUSTOM0"] = "custom0_attrib";
-		actions.renames["CUSTOM1"] = "custom1_attrib";
-		actions.renames["CUSTOM2"] = "custom2_attrib";
-		actions.renames["CUSTOM3"] = "custom3_attrib";
+		actions.renames["CUSTOM0"] = "_vertex_pull_custom0_attrib(custom0_attrib)";
+		actions.renames["CUSTOM1"] = "_vertex_pull_custom1_attrib(custom1_attrib)";
+		actions.renames["CUSTOM2"] = "_vertex_pull_custom2_attrib(custom2_attrib)";
+		actions.renames["CUSTOM3"] = "_vertex_pull_custom3_attrib(custom3_attrib)";
 		actions.renames["LIGHT_VERTEX"] = "light_vertex";
 
 		actions.renames["NODE_POSITION_WORLD"] = "read_model_matrix[3].xyz";

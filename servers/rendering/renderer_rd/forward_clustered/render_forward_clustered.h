@@ -391,6 +391,7 @@ private:
 			uint32_t uv_offset; //packed
 			uint32_t multimesh_motion_vectors_current_offset;
 			uint32_t multimesh_motion_vectors_previous_offset;
+			uint32_t draw_id; // Only used for meshlet indirect draws; indexes into meshlet_prefix_sum
 			PushConstantUbershader ubershader;
 		};
 

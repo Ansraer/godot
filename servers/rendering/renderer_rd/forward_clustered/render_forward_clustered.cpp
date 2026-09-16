@@ -5402,11 +5402,20 @@ void RenderForwardClustered::_meshlet_culling_init() {
 
 		{
 			Vector<RD::Uniform> u;
-			RD::Uniform ui;
-			ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-			ui.binding = 0;
-			ui.append_id(fb.global_meshlet_instances);
-			u.push_back(ui);
+			{
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = 0;
+				ui.append_id(fb.global_meshlet_instances);
+				u.push_back(ui);
+			}
+			{
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = 1;
+				ui.append_id(fb.prefix_sum);
+				u.push_back(ui);
+			}
 			fb.scene_meshlet_frame_uniform_set = rd->uniform_set_create(u, scene_shader_rid, MESHLET_FRAME_UNIFORM_SET);
 		}
 	}
@@ -5438,11 +5447,13 @@ void RenderForwardClustered::_meshlet_culling_init() {
 
 		{
 			Vector<RD::Uniform> u;
-			RD::Uniform ui;
-			ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-			ui.binding = 0;
-			ui.append_id(default_storage);
-			u.push_back(ui);
+			for (uint32_t b = 0; b <= 1; b++) {
+				RD::Uniform ui;
+				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				ui.binding = b;
+				ui.append_id(default_storage);
+				u.push_back(ui);
+			}
 			meshlet_culling.dummy_frame_uniform_set = rd->uniform_set_create(u, scene_shader_rid, MESHLET_FRAME_UNIFORM_SET);
 		}
 	}
