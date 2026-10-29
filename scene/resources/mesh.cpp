@@ -2202,10 +2202,11 @@ bool ArrayMesh::_bake_meshlets_for_surface(int p_surface_idx, const PackedVector
 	SurfaceTool::MeshletBuilderOutput dag;
 	if (!SurfaceTool::build_meshlet_lod_dag_func(
 				vertex_positions, vertex_count, position_stride,
+				vertex_attributes, attribute_stride, attribute_count,
+				attribute_weights,
 				uindices.ptr(), index_count,
 				RSE::MAX_MESHLET_VERTICES, RSE::MAX_MESHLET_TRIANGLES,
-				vertex_attributes, attribute_stride,
-				attribute_weights, attribute_count, &dag)) {
+				&dag)) {
 		return false;
 	}
 	if (dag.meshlets.is_empty()) {

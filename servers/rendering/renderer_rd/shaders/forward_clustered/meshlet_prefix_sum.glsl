@@ -35,7 +35,7 @@ layout(set = 0, binding = 1, std430) restrict writeonly buffer PrefixSum {
 prefix_sum;
 
 layout(set = 0, binding = 2, std430) restrict writeonly buffer IndirectCmds {
-	DrawIndexedIndirectCommand data[];
+	DrawIndirectCommand data[];
 }
 indirect_cmds;
 
@@ -84,11 +84,10 @@ void main() {
 		if (idx < params.num_draws) {
 			prefix_sum.data[idx] = offset;
 
-			DrawIndexedIndirectCommand cmd;
-			cmd.index_count = uint(MAX_MESHLET_INDICES);
+			DrawIndirectCommand cmd;
+			cmd.vertex_count = uint(MAX_MESHLET_INDICES);
 			cmd.instance_count = value;
-			cmd.first_index = 0u;
-			cmd.vertex_offset = 0;
+			cmd.first_vertex = 0u;
 			cmd.first_instance = 0u;
 			indirect_cmds.data[idx] = cmd;
 		}

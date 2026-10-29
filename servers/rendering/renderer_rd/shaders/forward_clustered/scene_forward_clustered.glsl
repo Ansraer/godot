@@ -19,6 +19,33 @@
 
 /* INPUT ATTRIBS */
 
+#ifdef USE_MESHLETS
+
+uint _meshlet_global_vertex_index = 0u;
+uint _meshlet_instance_id = 0u;
+
+#define _vertex_pull_vertex_angle_attrib(raw) meshlet_pull_position(_meshlet_global_vertex_index)
+#define _vertex_pull_axis_tangent_attrib(raw) meshlet_pull_normal_tangent(_meshlet_global_vertex_index)
+#define _vertex_pull_color_attrib(raw) meshlet_pull_color(_meshlet_global_vertex_index)
+#define _vertex_pull_uv_attrib(raw) meshlet_pull_uv(_meshlet_global_vertex_index)
+#define _vertex_pull_uv2_attrib(raw) meshlet_pull_uv2(_meshlet_global_vertex_index)
+#define _vertex_pull_custom0_attrib(raw) meshlet_pull_custom(0u, _meshlet_global_vertex_index)
+#define _vertex_pull_custom1_attrib(raw) meshlet_pull_custom(1u, _meshlet_global_vertex_index)
+#define _vertex_pull_custom2_attrib(raw) meshlet_pull_custom(2u, _meshlet_global_vertex_index)
+#define _vertex_pull_custom3_attrib(raw) meshlet_pull_custom(3u, _meshlet_global_vertex_index)
+
+#else
+
+#define _vertex_pull_vertex_angle_attrib(raw) (raw)
+#define _vertex_pull_axis_tangent_attrib(raw) (raw)
+#define _vertex_pull_color_attrib(raw) (raw)
+#define _vertex_pull_uv_attrib(raw) (raw)
+#define _vertex_pull_uv2_attrib(raw) (raw)
+#define _vertex_pull_custom0_attrib(raw) (raw)
+#define _vertex_pull_custom1_attrib(raw) (raw)
+#define _vertex_pull_custom2_attrib(raw) (raw)
+#define _vertex_pull_custom3_attrib(raw) (raw)
+
 // Always contains vertex position in XYZ, can contain tangent angle in W.
 layout(location = 0) in vec4 vertex_angle_attrib;
 
@@ -76,46 +103,7 @@ layout(location = 13) in vec4 previous_normal_attrib;
 
 #endif // MOTION_VECTORS
 
-// Vertex Pulling (for meshlets)
-
-uint _meshlet_global_vertex_index = 0u;
-uint _meshlet_instance_id = 0u;
-
-vec4 _vertex_pull_vertex_angle_attrib(vec4 raw) {
-	return sc_meshlets() ? meshlet_pull_position(_meshlet_global_vertex_index) : raw;
-}
-
-vec4 _vertex_pull_axis_tangent_attrib(vec4 raw) {
-	return sc_meshlets() ? meshlet_pull_normal_tangent(_meshlet_global_vertex_index) : raw;
-}
-
-vec4 _vertex_pull_color_attrib(vec4 raw) {
-	return sc_meshlets() ? meshlet_pull_color(_meshlet_global_vertex_index) : raw;
-}
-
-vec2 _vertex_pull_uv_attrib(vec2 raw) {
-	return sc_meshlets() ? meshlet_pull_uv(_meshlet_global_vertex_index) : raw;
-}
-
-vec2 _vertex_pull_uv2_attrib(vec2 raw) {
-	return sc_meshlets() ? meshlet_pull_uv2(_meshlet_global_vertex_index) : raw;
-}
-
-vec4 _vertex_pull_custom0_attrib(vec4 raw) {
-	return sc_meshlets() ? meshlet_pull_custom(0u, _meshlet_global_vertex_index) : raw;
-}
-
-vec4 _vertex_pull_custom1_attrib(vec4 raw) {
-	return sc_meshlets() ? meshlet_pull_custom(1u, _meshlet_global_vertex_index) : raw;
-}
-
-vec4 _vertex_pull_custom2_attrib(vec4 raw) {
-	return sc_meshlets() ? meshlet_pull_custom(2u, _meshlet_global_vertex_index) : raw;
-}
-
-vec4 _vertex_pull_custom3_attrib(vec4 raw) {
-	return sc_meshlets() ? meshlet_pull_custom(3u, _meshlet_global_vertex_index) : raw;
-}
+#endif // USE_MESHLETS
 
 void axis_angle_to_tbn(vec3 axis, float angle, out vec3 tangent, out vec3 binormal, out vec3 normal) {
 	float c = cos(angle);
@@ -808,7 +796,8 @@ void _unpack_vertex_attributes(vec4 p_vertex_in, vec3 p_compressed_aabb_position
 }
 
 void main() {
-	if (sc_meshlets()) {
+#ifdef USE_MESHLETS
+	{
 		uint mi_index = meshlet_prefix_sum.data[draw_call.draw_id] + uint(gl_InstanceIndex);
 		MeshletInstance mi = meshlet_instances.data[mi_index];
 		Meshlet m = meshlets.data[mi.meshlet_id];
@@ -827,6 +816,7 @@ void main() {
 		_meshlet_global_vertex_index = meshlet_vertices.data[m.vertex_offset + local_vidx];
 		_meshlet_instance_id = mi.instance_id;
 	}
+#endif
 
 	uint instance_index = draw_call.instance_index;
 	if (!sc_multimesh()) {

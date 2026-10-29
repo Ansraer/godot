@@ -48,6 +48,7 @@ public:
 		SHADER_GROUP_ADVANCED,
 		SHADER_GROUP_MULTIVIEW,
 		SHADER_GROUP_ADVANCED_MULTIVIEW,
+		SHADER_GROUP_MESHLETS,
 	};
 
 	// Not an enum because these values are constants that are processed as numbers
@@ -63,6 +64,9 @@ public:
 		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_MATERIAL = 7;
 		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_SDF = 8;
 		constexpr static uint16_t SHADER_VERSION_COLOR_PASS = 9;
+		// Non-meshlet variants occupy indices [0..NON_MESHLET_COUNT). The meshlet twin of any
+		// version V lives at index (V + NON_MESHLET_COUNT).
+		constexpr static uint16_t SHADER_VERSION_NON_MESHLET_COUNT = SHADER_VERSION_COLOR_PASS * 2 + (1 << 5); // (18) depth + (32) color-pass flag combinations.
 	};
 
 	enum ShaderColorPassFlags {
@@ -129,7 +133,6 @@ public:
 				uint32_t fog_use_legacy_blending : 1;
 				uint32_t cluster_has_area_light : 1;
 				uint32_t use_lightmap_specular : 1;
-				uint32_t use_meshlets : 1;
 			};
 		};
 
@@ -200,6 +203,7 @@ public:
 			ShaderSpecialization shader_specialization = {};
 			uint32_t wireframe = false;
 			uint32_t ubershader = false;
+			uint32_t meshlets = false;
 
 			uint32_t hash() const {
 				uint32_t h = hash_murmur3_one_64(vertex_format_id);
@@ -213,6 +217,7 @@ public:
 				h = hash_murmur3_one_32(shader_specialization.packed_2, h);
 				h = hash_murmur3_one_32(wireframe, h);
 				h = hash_murmur3_one_32(ubershader, h);
+				h = hash_murmur3_one_32(meshlets, h);
 				return hash_fmix32(h);
 			}
 		};
@@ -222,7 +227,7 @@ public:
 
 		RID version;
 
-		static const uint32_t VERTEX_INPUT_MASKS_SIZE = ShaderVersion::SHADER_VERSION_COLOR_PASS * 2 + SHADER_COLOR_PASS_FLAG_COUNT;
+		static const uint32_t VERTEX_INPUT_MASKS_SIZE = ShaderVersion::SHADER_VERSION_NON_MESHLET_COUNT * 2;
 		std::atomic<uint64_t> vertex_input_masks[VERTEX_INPUT_MASKS_SIZE] = {};
 
 		Vector<ShaderCompiler::GeneratedCode::Texture> texture_uniforms;
@@ -308,11 +313,11 @@ public:
 		virtual bool casts_shadows() const;
 		virtual RenderingServerTypes::ShaderNativeSourceCode get_native_source_code() const;
 		virtual Pair<ShaderRD *, RID> get_native_shader_and_version() const;
-		uint16_t _get_shader_version(PipelineVersion p_pipeline_version, uint32_t p_color_pass_flags, bool p_ubershader) const;
+		uint16_t _get_shader_version(PipelineVersion p_pipeline_version, uint32_t p_color_pass_flags, bool p_ubershader, bool p_meshlets = false) const;
 		RID _get_shader_variant(uint16_t p_shader_version) const;
 		void _clear_vertex_input_mask_cache();
-		RID get_shader_variant(PipelineVersion p_pipeline_version, uint32_t p_color_pass_flags, bool p_ubershader) const;
-		uint64_t get_vertex_input_mask(PipelineVersion p_pipeline_version, uint32_t p_color_pass_flags, bool p_ubershader);
+		RID get_shader_variant(PipelineVersion p_pipeline_version, uint32_t p_color_pass_flags, bool p_ubershader, bool p_meshlets = false) const;
+		uint64_t get_vertex_input_mask(PipelineVersion p_pipeline_version, uint32_t p_color_pass_flags, bool p_ubershader, bool p_meshlets = false);
 		RD::PolygonCullMode get_cull_mode_from_cull_variant(CullVariant p_cull_variant);
 		bool is_valid() const;
 
@@ -359,6 +364,7 @@ public:
 	RID default_shader_rd;
 	RID default_multiview_shader_rd; // This is lazily initialized, use "get_default_shader_rd" instead.
 	RID default_shader_sdfgi_rd;
+	RID default_meshlet_shader_rd; // Color-pass, non-ubershader, USE_MESHLETS variant — used only to look up set 4/5 descriptor layouts.
 
 	RID default_vec4_xform_buffer;
 	RID default_vec4_xform_uniform_set;

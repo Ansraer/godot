@@ -244,15 +244,16 @@ private:
 			RID scene_meshlet_frame_uniform_set;
 		} frame_buffers[RING_SIZE];
 
-		// sets 4 and 5 for when sc_meshlets() == false (regular draw)
-		RID dummy_surface_uniform_set;
-		RID dummy_frame_uniform_set;
-
 		uint32_t current_slot = 0;
 		uint32_t max_draws = 0;
 		uint32_t max_meshlet_instances = 0;
+		uint32_t static_draws = 0;
 		bool enabled = false;
 	} meshlet_culling;
+
+	// temp forward declaration
+	// FIXME: move all the meshlet code a hundred lines lower or so after RenderList has actually been declared
+	struct RenderList;
 
 	void _meshlet_culling_init();
 	void _meshlet_culling_free();
@@ -300,6 +301,8 @@ private:
 		uint32_t element_offset = 0;
 		bool use_directional_soft_shadow = false;
 		SceneShaderForwardClustered::ShaderSpecialization base_specialization = {};
+		bool meshlet_mode = false;
+		uint32_t meshlet_draw_id_base = 0;
 
 		RenderListParameters(GeometryInstanceSurfaceDataCache **p_elements, RenderElementInfo *p_element_info, int p_element_count, bool p_reverse_cull, PassMode p_pass_mode, uint32_t p_color_pass_flags, bool p_no_gi, bool p_use_directional_soft_shadows, RID p_render_pass_uniform_set, bool p_force_wireframe = false, const Vector2 &p_uv_offset = Vector2(), float p_lod_distance_multiplier = 0.0, float p_screen_mesh_lod_threshold = 0.0, uint32_t p_view_count = 1, uint32_t p_element_offset = 0, SceneShaderForwardClustered::ShaderSpecialization p_base_specialization = {}) {
 			elements = p_elements;

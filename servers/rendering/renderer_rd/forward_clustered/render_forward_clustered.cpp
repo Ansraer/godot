@@ -314,9 +314,11 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, p_params->render_pass_uniform_set, RENDER_PASS_UNIFORM_SET);
 	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, scene_shader.default_vec4_xform_uniform_set, TRANSFORMS_UNIFORM_SET);
 
-	// dummy meshlet uniform sets
-	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, meshlet_culling.dummy_surface_uniform_set, MESHLET_SURFACE_UNIFORM_SET);
-	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, meshlet_culling.dummy_frame_uniform_set, MESHLET_FRAME_UNIFORM_SET);
+	const bool meshlet_mode = p_params->meshlet_mode;
+	if (meshlet_mode) {
+		RD::get_singleton()->draw_list_bind_uniform_set(draw_list, meshlet_culling.frame_buffers[meshlet_culling.current_slot].scene_meshlet_frame_uniform_set, MESHLET_FRAME_UNIFORM_SET);
+	}
+	RID meshlet_indirect_cmds = meshlet_mode ? meshlet_culling.frame_buffers[meshlet_culling.current_slot].indirect_cmds : RID();
 
 	RID prev_material_uniform_set;
 
@@ -343,6 +345,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 
 	bool should_request_redraw = false;
 
+	uint32_t meshlet_draw_id = p_params->meshlet_draw_id_base;
 	for (uint32_t i = p_from_element; i < p_to_element; i++) {
 		const GeometryInstanceSurfaceDataCache *surf = p_params->elements[i];
 		const RenderElementInfo &element_info = p_params->element_info[i];
@@ -350,10 +353,20 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		if (p_pass_mode == PASS_MODE_COLOR && surf->color_pass_inclusion_mask && (p_color_pass_flags & surf->color_pass_inclusion_mask) == 0) {
 			// Some surfaces can be repeated in multiple render lists. We exclude them from being rendered on the color pass based on the
 			// features supported by the pass compared to the exclusion mask.
+			if (meshlet_mode) {
+				meshlet_draw_id++;
+				i += element_info.repeat - 1;
+			}
 			continue;
 		}
 
 		if (surf->owner->instance_count == 0) {
+			if (meshlet_mode) {
+				// FIXME: double check this. Ideally we should just skip over such elements when doing the culling, so there should
+				// be no need to increment the mdrawid
+				meshlet_draw_id++;
+				i += element_info.repeat - 1;
+			}
 			continue;
 		}
 
@@ -390,6 +403,11 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		}
 
 		if (!mesh_surface) {
+			if (meshlet_mode) {
+				// FIXME: if the mesh has no surface we should just skip over it during the culling run -> not give it a valid meshlet_draw_id
+				meshlet_draw_id++;
+				i += element_info.repeat - 1;
+			}
 			continue;
 		}
 
@@ -492,6 +510,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		pipeline_key.framebuffer_format_id = framebuffer_format;
 		pipeline_key.wireframe = p_params->force_wireframe;
 		pipeline_key.ubershader = 0;
+		pipeline_key.meshlets = meshlet_mode ? 1 : 0;
 
 		bool emulate_point_size = shader->uses_point_size && scene_shader.emulate_point_size;
 
@@ -505,11 +524,16 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 			// Skeleton and blend shape.
 			RD::VertexFormatID vertex_format = -1;
 			bool pipeline_motion_vectors = pipeline_key.color_pass_flags & SceneShaderForwardClustered::PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS;
-			uint64_t input_mask = shader->get_vertex_input_mask(pipeline_key.version, pipeline_key.color_pass_flags, pipeline_key.ubershader);
-			if (surf->owner->mesh_instance.is_valid()) {
-				mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(surf->owner->mesh_instance, surf->surface_index, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
+			if (meshlet_mode) {
+				vertex_array_rd = RID();
+				vertex_format = RD::INVALID_ID;
 			} else {
-				mesh_storage->mesh_surface_get_vertex_arrays_and_format(mesh_surface, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
+				uint64_t input_mask = shader->get_vertex_input_mask(pipeline_key.version, pipeline_key.color_pass_flags, pipeline_key.ubershader);
+				if (surf->owner->mesh_instance.is_valid()) {
+					mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(surf->owner->mesh_instance, surf->surface_index, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
+				} else {
+					mesh_storage->mesh_surface_get_vertex_arrays_and_format(mesh_surface, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
+				}
 			}
 
 			pipeline_key.vertex_format_id = vertex_format;
@@ -544,7 +568,9 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		}
 
 		if (pipeline_valid) {
-			if (!emulate_point_size) {
+			if (meshlet_mode) {
+				index_array_rd = RID();
+			} else if (!emulate_point_size) {
 				index_array_rd = mesh_storage->mesh_surface_get_index_array(mesh_surface, element_info.lod_index);
 			} else {
 				index_array_rd = RID();
@@ -560,6 +586,14 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 					RD::get_singleton()->draw_list_bind_index_array(draw_list, index_array_rd);
 				}
 				prev_index_array_rd = index_array_rd;
+			}
+
+			if (meshlet_mode) {
+				RID mesh_rid = surf->owner->data->base;
+				RID surf_uset = mesh_storage->mesh_get_meshlet_surface_uniform_set(mesh_rid, surf->surface_index, scene_shader.default_meshlet_shader_rd, false);
+				if (surf_uset.is_valid()) {
+					RD::get_singleton()->draw_list_bind_uniform_set(draw_list, surf_uset, MESHLET_SURFACE_UNIFORM_SET);
+				}
 			}
 
 			if (!pipeline_rd.is_null()) {
@@ -589,6 +623,8 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 				push_constant.multimesh_motion_vectors_previous_offset = 0;
 			}
 
+			push_constant.draw_id = meshlet_mode ? meshlet_draw_id : 0;
+
 			size_t push_constant_size = 0;
 			if (pipeline_key.ubershader) {
 				push_constant_size = sizeof(SceneState::PushConstant);
@@ -608,7 +644,10 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 
 			bool indirect = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_INDIRECT);
 
-			if (emulate_point_size) {
+			if (meshlet_mode) {
+				const uint32_t indirect_commands_size = sizeof(uint32_t) * 4;
+				RD::get_singleton()->draw_list_draw_indirect(draw_list, false, meshlet_indirect_cmds, meshlet_draw_id * indirect_commands_size, 1, 0);
+			} else if (emulate_point_size) {
 				if (indirect) {
 					WARN_PRINT("Indirect draws are not supported when emulating point size.");
 				}
@@ -620,6 +659,9 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 			}
 		}
 
+		if (meshlet_mode) {
+			meshlet_draw_id++;
+		}
 		i += element_info.repeat - 1; //skip equal elements
 	}
 
@@ -2242,7 +2284,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, p_render_data, is_multiview, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true);
 
 	{
-		bool render_motion_pass = !render_list[RENDER_LIST_MOTION].elements.is_empty();
+		bool render_motion_pass = !render_list[RENDER_LIST_MOTION].elements.is_empty() || !render_list[RENDER_LIST_MESHLET_MOTION].elements.is_empty();
 
 		{
 			Vector<Color> c;
@@ -2263,6 +2305,13 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			RID opaque_framebuffer = using_motion_pass ? rb_data->get_color_pass_fb(opaque_color_pass_flags) : color_framebuffer;
 			RenderListParameters render_list_params(render_list[RENDER_LIST_OPAQUE].elements.ptr(), render_list[RENDER_LIST_OPAQUE].element_info.ptr(), render_list[RENDER_LIST_OPAQUE].elements.size(), reverse_cull, PASS_MODE_COLOR, opaque_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
 			_render_list_with_draw_list(&render_list_params, opaque_framebuffer, RD::DrawFlags(load_color ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_COLOR_ALL) | (depth_pre_pass ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_DEPTH), c, 0.0f, 0u, p_render_data->render_region);
+
+			RenderListParameters meshlet_list_params(render_list[RENDER_LIST_MESHLET].elements.ptr(), render_list[RENDER_LIST_MESHLET].element_info.ptr(), render_list[RENDER_LIST_MESHLET].elements.size(), reverse_cull, PASS_MODE_COLOR, opaque_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
+			meshlet_list_params.meshlet_mode = true;
+			meshlet_list_params.meshlet_draw_id_base = 0;
+			if (meshlet_list_params.element_count > 0) {
+				_render_list_with_draw_list(&meshlet_list_params, opaque_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, p_render_data->render_region);
+			}
 		}
 
 		RD::get_singleton()->draw_command_end_label();
@@ -2288,7 +2337,14 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_MOTION, p_render_data, is_multiview, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true);
 
 			RenderListParameters render_list_params(render_list[RENDER_LIST_MOTION].elements.ptr(), render_list[RENDER_LIST_MOTION].element_info.ptr(), render_list[RENDER_LIST_MOTION].elements.size(), reverse_cull, PASS_MODE_COLOR, color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
-			_render_list_with_draw_list(&render_list_params, color_framebuffer);
+			_render_list_with_draw_list(&render_list_params, color_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, Rect2());
+
+			RenderListParameters meshlet_motion_list_params(render_list[RENDER_LIST_MESHLET_MOTION].elements.ptr(), render_list[RENDER_LIST_MESHLET_MOTION].element_info.ptr(), render_list[RENDER_LIST_MESHLET_MOTION].elements.size(), reverse_cull, PASS_MODE_COLOR, color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
+			meshlet_motion_list_params.meshlet_mode = true;
+			meshlet_motion_list_params.meshlet_draw_id_base = meshlet_culling.static_draws;
+			if (meshlet_motion_list_params.element_count > 0) {
+				_render_list_with_draw_list(&meshlet_motion_list_params, color_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, Rect2());
+			}
 
 			RD::get_singleton()->draw_command_end_label();
 		}
@@ -5293,6 +5349,9 @@ RenderForwardClustered::RenderForwardClustered() {
 void RenderForwardClustered::_meshlet_culling_init() {
 	RD *rd = RD::get_singleton();
 
+	// Enable the meshlet shader variant group so the meshlet-specific scene shader variants get compiled.
+	scene_shader.shader.enable_group(SceneShaderForwardClustered::SHADER_GROUP_MESHLETS);
+
 	meshlet_culling.max_draws = MAX(uint32_t(256), uint32_t(GLOBAL_GET("rendering/meshlets/max_draws_per_frame")));
 	meshlet_culling.max_meshlet_instances = MAX(uint32_t(16384), uint32_t(GLOBAL_GET("rendering/meshlets/max_meshlet_instances_per_frame")));
 
@@ -5323,11 +5382,10 @@ void RenderForwardClustered::_meshlet_culling_init() {
 
 	RID cull_shader_rid = meshlet_culling.cull_shader.version_get_shader(meshlet_culling.cull_shader_version, 0);
 	RID prefix_shader_rid = meshlet_culling.prefix_shader.version_get_shader(meshlet_culling.prefix_shader_version, 0);
-	RID scene_shader_rid = scene_shader.default_shader_rd;
 
 	const uint32_t counter_size_bytes = meshlet_culling.max_draws * sizeof(uint32_t);
-	// DrawIndexedIndirectCommand = (5 x uint32)
-	const uint32_t indirect_commands_size_bytes = meshlet_culling.max_draws * sizeof(uint32_t) * 5;
+	// DrawIndirectCommand = (4 x uint32)
+	const uint32_t indirect_commands_size_bytes = meshlet_culling.max_draws * sizeof(uint32_t) * 4;
 	// MeshletInstance is 2 x uint32 (meshlet_id, instance_id)
 	const uint32_t instances_size_bytes = meshlet_culling.max_meshlet_instances * sizeof(uint32_t) * 2;
 
@@ -5416,45 +5474,7 @@ void RenderForwardClustered::_meshlet_culling_init() {
 				ui.append_id(fb.prefix_sum);
 				u.push_back(ui);
 			}
-			fb.scene_meshlet_frame_uniform_set = rd->uniform_set_create(u, scene_shader_rid, MESHLET_FRAME_UNIFORM_SET);
-		}
-	}
-
-	// dummy scene shader uniform sets for sc_meshlets() = false
-	{
-		RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
-		RID default_storage = mesh_storage->get_default_rd_storage_buffer();
-		RID default_uniform = mesh_storage->get_default_rd_uniform_buffer();
-
-		{
-			Vector<RD::Uniform> u;
-			{
-				RD::Uniform ui;
-				ui.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
-				ui.binding = 0;
-				ui.append_id(default_uniform);
-				u.push_back(ui);
-			}
-			for (uint32_t b = 1; b <= 6; b++) {
-				RD::Uniform ui;
-				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-				ui.binding = b;
-				ui.append_id(default_storage);
-				u.push_back(ui);
-			}
-			meshlet_culling.dummy_surface_uniform_set = rd->uniform_set_create(u, scene_shader_rid, MESHLET_SURFACE_UNIFORM_SET);
-		}
-
-		{
-			Vector<RD::Uniform> u;
-			for (uint32_t b = 0; b <= 1; b++) {
-				RD::Uniform ui;
-				ui.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-				ui.binding = b;
-				ui.append_id(default_storage);
-				u.push_back(ui);
-			}
-			meshlet_culling.dummy_frame_uniform_set = rd->uniform_set_create(u, scene_shader_rid, MESHLET_FRAME_UNIFORM_SET);
+			fb.scene_meshlet_frame_uniform_set = rd->uniform_set_create(u, scene_shader.default_meshlet_shader_rd, MESHLET_FRAME_UNIFORM_SET);
 		}
 	}
 
@@ -5538,7 +5558,7 @@ void RenderForwardClustered::_meshlet_culling_run(RD::ComputeListID p_compute_li
 		}
 
 		RID mesh_rid = surf->owner->data->base;
-		RID uset = mesh_storage->mesh_get_meshlet_surface_uniform_set(mesh_rid, surf->surface_index, cull_shader_rid);
+		RID uset = mesh_storage->mesh_get_meshlet_surface_uniform_set(mesh_rid, surf->surface_index, cull_shader_rid, true);
 
 		if (uset.is_valid()) {
 			rd->compute_list_bind_uniform_set(p_compute_list, uset, MESHLET_SURFACE_UNIFORM_SET);
@@ -5574,6 +5594,8 @@ void RenderForwardClustered::_meshlet_compute() {
 	uint32_t static_draws = _meshlet_count_draws(rl_static);
 	uint32_t motion_draws = _meshlet_count_draws(rl_motion);
 	uint32_t num_draws = static_draws + motion_draws;
+
+	meshlet_culling.static_draws = static_draws;
 
 	if (num_draws == 0) {
 		return;

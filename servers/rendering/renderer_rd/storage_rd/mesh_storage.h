@@ -159,7 +159,12 @@ private:
 			RID lod_groups_buffer;
 			uint32_t lod_groups_buffer_size = 0;
 
-			RID meshlet_uniform_set;
+			// FIXME:
+			// The set 4 layout fore the scene shader and the meshlet cull compute shader is identical
+			// but their descriptor flags are different
+			// Duplicate it with different flags, look into unifying this shit
+			RID meshlet_uniform_set_graphics;
+			RID meshlet_uniform_set_compute;
 
 			uint32_t render_index = 0;
 			uint64_t render_pass = 0;
@@ -435,7 +440,7 @@ public:
 	virtual void mesh_add_meshlet_surface(RID p_mesh, int p_surface, const RenderingServerTypes::MeshletSurfaceData &p_data) override;
 	virtual void mesh_meshlet_surface_remove(RID p_mesh, int p_surface) override;
 	virtual RenderingServerTypes::MeshletSurfaceData mesh_get_meshlet_surface(RID p_mesh, int p_surface) const override;
-	RID mesh_get_meshlet_surface_uniform_set(RID p_mesh, int p_surface, RID p_shader);
+	RID mesh_get_meshlet_surface_uniform_set(RID p_mesh, int p_surface, RID p_shader, bool p_compute);
 
 	virtual void mesh_debug_usage(List<RenderingServerTypes::MeshInfo> *r_info) override;
 

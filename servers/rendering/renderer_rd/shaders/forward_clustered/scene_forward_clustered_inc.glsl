@@ -151,10 +151,6 @@ bool sc_use_lightmap_specular() {
 	return ((sc_packed_1() >> 6) & 1U) != 0;
 }
 
-bool sc_meshlets() {
-	return ((sc_packed_1() >> 7) & 1U) != 0;
-}
-
 float sc_luminance_multiplier() {
 	// Not used in clustered renderer but we share some code with the mobile renderer that requires this.
 	return 1.0;
@@ -162,15 +158,24 @@ float sc_luminance_multiplier() {
 
 layout(constant_id = 2) const bool sc_emulate_point_size = false;
 
-#ifdef POINT_SIZE_USED
+#ifdef USE_MESHLETS
 
-#define VERTEX_INDEX (sc_meshlets() ? _meshlet_global_vertex_index : (sc_emulate_point_size ? gl_InstanceIndex : gl_VertexIndex))
-#define INSTANCE_INDEX (sc_meshlets() ? _meshlet_instance_id : (sc_emulate_point_size ? (gl_VertexIndex / 6) : gl_InstanceIndex))
+#define VERTEX_INDEX (_meshlet_global_vertex_index)
+#define INSTANCE_INDEX (_meshlet_instance_id)
 
 #else
 
-#define VERTEX_INDEX (sc_meshlets() ? _meshlet_global_vertex_index : gl_VertexIndex)
-#define INSTANCE_INDEX (sc_meshlets() ? _meshlet_instance_id : gl_InstanceIndex)
+#ifdef POINT_SIZE_USED
+
+#define VERTEX_INDEX (sc_emulate_point_size ? gl_InstanceIndex : gl_VertexIndex)
+#define INSTANCE_INDEX (sc_emulate_point_size ? (gl_VertexIndex / 6) : gl_InstanceIndex)
+
+#else
+
+#define VERTEX_INDEX (gl_VertexIndex)
+#define INSTANCE_INDEX (gl_InstanceIndex)
+
+#endif // USE_MESHLETS
 
 #endif
 
@@ -519,10 +524,56 @@ layout(set = 2, binding = 0, std430) restrict readonly buffer Transforms {
 }
 transforms;
 
-/* Set 4 Surface specific meshlet data (dummy-bound for non meshlet draw) */
+#ifdef USE_MESHLETS
+
 #include "meshlet_inc.glsl"
 
-/* Set 5 Per-frame meshlet instances + prefix sum (dummy-bound for non meshlet draws) */
+/* Set 4 Surface specific meshlet data */
+layout(set = 4, binding = 0, std140) uniform MeshletSurfaceInfo {
+	uint meshlet_count;
+	uint lod_group_count;
+	uint format_flags_lo;
+	uint format_flags_hi;
+	uint vertex_count;
+}
+meshlet_surface_info;
+
+layout(set = 4, binding = 1, std430) restrict readonly buffer MeshletBuffer {
+	Meshlet data[];
+}
+meshlets;
+
+// This currently is a uint32 array, while on the cpu side we upload uint8. WHEN ACCESSING THIS WE NEED TO PROPERLY EXTRACT THE DATA WE NEED!!!!
+// TODO: look into using GL_EXT_shader_explicit_arithmetic_types_int8 and VK_KHR_8bit_storage instead.
+layout(set = 4, binding = 2, std430) restrict readonly buffer MeshletVerticesBuffer {
+	uint data[];
+}
+meshlet_vertices;
+
+layout(set = 4, binding = 3, std430) restrict readonly buffer MeshletTrianglesBuffer {
+	uint data[];
+}
+meshlet_triangles;
+
+layout(set = 4, binding = 4, std430) restrict readonly buffer LodGroupBuffer {
+	MeshletLodGroup data[];
+}
+lod_groups;
+
+layout(set = 4, binding = 5, std430) restrict readonly buffer MeshletVertexBuffer {
+	uint data[];
+}
+meshlet_vertex_buffer;
+
+layout(set = 4, binding = 6, std430) restrict readonly buffer MeshletAttributeBuffer {
+	uint data[];
+}
+meshlet_attribute_buffer;
+
+// vertex pulling helpers
+#include "meshlet_pull_inc.glsl"
+
+/* Set 5 Per-frame meshlet instances + prefix sum */
 layout(set = 5, binding = 0, std430) restrict readonly buffer MeshletInstancesBuffer {
 	MeshletInstance data[];
 }
@@ -532,5 +583,7 @@ layout(set = 5, binding = 1, std430) restrict readonly buffer MeshletPrefixSumBu
 	uint data[];
 }
 meshlet_prefix_sum;
+
+#endif // USE_MESHLETS
 
 /* Set 3 User Material */

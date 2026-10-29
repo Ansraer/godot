@@ -30,6 +30,7 @@
 
 #include "mesh_storage.h"
 
+#include "core/config/project_settings.h"
 #include "servers/rendering/renderer_viewport.h"
 #include "servers/rendering/rendering_server.h"
 #include "servers/rendering/rendering_server_types.h"
@@ -376,8 +377,14 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 	s->format = new_surface.format;
 	s->primitive = new_surface.primitive;
 
-	const bool use_as_storage = (new_surface.skin_data.size() || mesh->blend_shape_count > 0);
-	const bool requested_storage_buffer = (new_surface.format & RSE::ARRAY_FLAG_USE_STORAGE_BUFFER);
+	// FIXME: we might not actually need this if we forego vertex pulling
+	// if we use an indexed draw indirect we can use index offset into a merged meshlet index
+	// buffer instead of using vertex pulling
+
+	// Meshlet vertex pulling reads vertex_buffer / attribute_buffer as SSBOs, so they must be created with the storage bit.
+	const bool meshlets_enabled = GLOBAL_GET_CACHED(bool, "rendering/meshlets/use_meshlets");
+	const bool use_as_storage = (new_surface.skin_data.size() || mesh->blend_shape_count > 0 || meshlets_enabled);
+	const bool requested_storage_buffer = (new_surface.format & RSE::ARRAY_FLAG_USE_STORAGE_BUFFER) || meshlets_enabled;
 	const BitField<RD::BufferCreationBits> as_storage_flag = (use_as_storage || requested_storage_buffer) ? RD::BUFFER_CREATION_AS_STORAGE_BIT : 0;
 	const BitField<RD::BufferCreationBits> requested_storage_flag = requested_storage_buffer ? RD::BUFFER_CREATION_AS_STORAGE_BIT : 0;
 
@@ -569,9 +576,13 @@ void MeshStorage::_mesh_surface_clear(Mesh *p_mesh, int p_surface) {
 		RD::get_singleton()->free_rid(s.lod_groups_buffer);
 		s.lod_groups_buffer = RID();
 	}
-	if (s.meshlet_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set)) {
-		RD::get_singleton()->free_rid(s.meshlet_uniform_set);
-		s.meshlet_uniform_set = RID();
+	if (s.meshlet_uniform_set_graphics.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set_graphics)) {
+		RD::get_singleton()->free_rid(s.meshlet_uniform_set_graphics);
+		s.meshlet_uniform_set_graphics = RID();
+	}
+	if (s.meshlet_uniform_set_compute.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set_compute)) {
+		RD::get_singleton()->free_rid(s.meshlet_uniform_set_compute);
+		s.meshlet_uniform_set_compute = RID();
 	}
 
 	memdelete(p_mesh->surfaces[p_surface]);
@@ -949,10 +960,14 @@ void MeshStorage::mesh_add_meshlet_surface(RID p_mesh, int p_surface, const Rend
 		s.lod_groups_buffer = RID();
 	}
 
-	if (s.meshlet_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set)) {
-		RD::get_singleton()->free_rid(s.meshlet_uniform_set);
+	if (s.meshlet_uniform_set_graphics.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set_graphics)) {
+		RD::get_singleton()->free_rid(s.meshlet_uniform_set_graphics);
 	}
-	s.meshlet_uniform_set = RID();
+	s.meshlet_uniform_set_graphics = RID();
+	if (s.meshlet_uniform_set_compute.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set_compute)) {
+		RD::get_singleton()->free_rid(s.meshlet_uniform_set_compute);
+	}
+	s.meshlet_uniform_set_compute = RID();
 
 	if (p_data.meshlets.is_empty()) {
 		s.meshlet_count = 0;
@@ -978,7 +993,7 @@ void MeshStorage::mesh_add_meshlet_surface(RID p_mesh, int p_surface, const Rend
 	s.meshlet_triangles_buffer = RD::get_singleton()->storage_buffer_create(s.meshlet_triangles_buffer_size, p_data.meshlet_triangles.span().reinterpret<uint8_t>());
 	s.lod_groups_buffer = RD::get_singleton()->storage_buffer_create(s.lod_groups_buffer_size, p_data.lod_groups.span().reinterpret<uint8_t>());
 
-	uint32_t params[5];
+	uint32_t params[8] = {};
 	params[0] = s.meshlet_count;
 	params[1] = s.meshlet_lod_group_count;
 	params[2] = uint32_t(s.format & 0xFFFFFFFFu);
@@ -1022,13 +1037,17 @@ void MeshStorage::mesh_meshlet_surface_remove(RID p_mesh, int p_surface) {
 		s.lod_groups_buffer = RID();
 	}
 
-	if (s.meshlet_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set)) {
-		RD::get_singleton()->free_rid(s.meshlet_uniform_set);
-		s.meshlet_uniform_set = RID();
+	if (s.meshlet_uniform_set_graphics.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set_graphics)) {
+		RD::get_singleton()->free_rid(s.meshlet_uniform_set_graphics);
+		s.meshlet_uniform_set_graphics = RID();
+	}
+	if (s.meshlet_uniform_set_compute.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set_compute)) {
+		RD::get_singleton()->free_rid(s.meshlet_uniform_set_compute);
+		s.meshlet_uniform_set_compute = RID();
 	}
 }
 
-RID MeshStorage::mesh_get_meshlet_surface_uniform_set(RID p_mesh, int p_surface, RID p_shader) {
+RID MeshStorage::mesh_get_meshlet_surface_uniform_set(RID p_mesh, int p_surface, RID p_shader, bool p_compute) {
 	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL_V(mesh, RID());
 	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_surface, mesh->surface_count, RID());
@@ -1037,8 +1056,9 @@ RID MeshStorage::mesh_get_meshlet_surface_uniform_set(RID p_mesh, int p_surface,
 	if (s.meshlet_count == 0 || p_shader.is_null()) {
 		return RID();
 	}
-	if (s.meshlet_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(s.meshlet_uniform_set)) {
-		return s.meshlet_uniform_set;
+	RID &cached = p_compute ? s.meshlet_uniform_set_compute : s.meshlet_uniform_set_graphics;
+	if (cached.is_valid() && RD::get_singleton()->uniform_set_is_valid(cached)) {
+		return cached;
 	}
 
 	Vector<RD::Uniform> uniforms;
@@ -1097,8 +1117,8 @@ RID MeshStorage::mesh_get_meshlet_surface_uniform_set(RID p_mesh, int p_surface,
 
 	// TODO: check that this set is actually free when drawing in the forward plus renderer
 	uint32_t meshlet_uniform_set = 4;
-	s.meshlet_uniform_set = RD::get_singleton()->uniform_set_create(uniforms, p_shader, meshlet_uniform_set);
-	return s.meshlet_uniform_set;
+	cached = RD::get_singleton()->uniform_set_create(uniforms, p_shader, meshlet_uniform_set);
+	return cached;
 }
 
 RenderingServerTypes::MeshletSurfaceData MeshStorage::mesh_get_meshlet_surface(RID p_mesh, int p_surface) const {
