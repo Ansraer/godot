@@ -1,6 +1,6 @@
 // Vertex pulling helpers for meshlets
 
-// ArrayFormat bit flags — must match RenderingServerEnums::ArrayFormat
+// ArrayFormat bit flags MUST match RenderingServerEnums::ArrayFormat
 #define ARRAY_FORMAT_VERTEX (1u << 0)
 #define ARRAY_FORMAT_NORMAL (1u << 1)
 #define ARRAY_FORMAT_TANGENT (1u << 2)

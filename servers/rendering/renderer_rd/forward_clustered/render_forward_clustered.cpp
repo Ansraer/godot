@@ -2224,6 +2224,15 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		RenderListParameters render_list_params(render_list[RENDER_LIST_OPAQUE].elements.ptr(), render_list[RENDER_LIST_OPAQUE].element_info.ptr(), render_list[RENDER_LIST_OPAQUE].elements.size(), reverse_cull, depth_pass_mode, 0, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
 		_render_list_with_draw_list(&render_list_params, depth_framebuffer, RD::DrawFlags(needs_pre_resolve ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_ALL), depth_pass_clear, 0.0f, 0u, p_render_data->render_region);
 
+		// FIXME: come up with a unified way to enable/disable meshlet render_list_with_draw_list for here and below.
+		if (!render_list[RENDER_LIST_MESHLET].elements.is_empty()) {
+			rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_MESHLET, nullptr, is_multiview, RID(), samplers, depth_prepass_uniform_buffer_index);
+			RenderListParameters meshlet_depth_params(render_list[RENDER_LIST_MESHLET].elements.ptr(), render_list[RENDER_LIST_MESHLET].element_info.ptr(), render_list[RENDER_LIST_MESHLET].elements.size(), reverse_cull, depth_pass_mode, 0, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
+			meshlet_depth_params.meshlet_mode = true;
+			meshlet_depth_params.meshlet_draw_id_base = 0;
+			_render_list_with_draw_list(&meshlet_depth_params, depth_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, p_render_data->render_region);
+		}
+
 		RD::get_singleton()->draw_command_end_label();
 
 		if (use_msaa) {
@@ -2306,6 +2315,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			RenderListParameters render_list_params(render_list[RENDER_LIST_OPAQUE].elements.ptr(), render_list[RENDER_LIST_OPAQUE].element_info.ptr(), render_list[RENDER_LIST_OPAQUE].elements.size(), reverse_cull, PASS_MODE_COLOR, opaque_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
 			_render_list_with_draw_list(&render_list_params, opaque_framebuffer, RD::DrawFlags(load_color ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_COLOR_ALL) | (depth_pre_pass ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_DEPTH), c, 0.0f, 0u, p_render_data->render_region);
 
+			rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_MESHLET, p_render_data, is_multiview, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true);
 			RenderListParameters meshlet_list_params(render_list[RENDER_LIST_MESHLET].elements.ptr(), render_list[RENDER_LIST_MESHLET].element_info.ptr(), render_list[RENDER_LIST_MESHLET].elements.size(), reverse_cull, PASS_MODE_COLOR, opaque_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
 			meshlet_list_params.meshlet_mode = true;
 			meshlet_list_params.meshlet_draw_id_base = 0;
@@ -2339,6 +2349,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			RenderListParameters render_list_params(render_list[RENDER_LIST_MOTION].elements.ptr(), render_list[RENDER_LIST_MOTION].element_info.ptr(), render_list[RENDER_LIST_MOTION].elements.size(), reverse_cull, PASS_MODE_COLOR, color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
 			_render_list_with_draw_list(&render_list_params, color_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, Rect2());
 
+			rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_MESHLET_MOTION, p_render_data, is_multiview, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true);
 			RenderListParameters meshlet_motion_list_params(render_list[RENDER_LIST_MESHLET_MOTION].elements.ptr(), render_list[RENDER_LIST_MESHLET_MOTION].element_info.ptr(), render_list[RENDER_LIST_MESHLET_MOTION].elements.size(), reverse_cull, PASS_MODE_COLOR, color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
 			meshlet_motion_list_params.meshlet_mode = true;
 			meshlet_motion_list_params.meshlet_draw_id_base = meshlet_culling.static_draws;
