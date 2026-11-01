@@ -2006,7 +2006,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	RD::get_singleton()->draw_command_end_label();
 
 	if (GLOBAL_GET_CACHED(bool, "rendering/meshlets/use_meshlets")) {
-		_meshlet_compute();
+		_meshlet_compute(p_render_data, screen_size);
 	}
 
 	if (!is_reflection_probe) {
@@ -5372,7 +5372,14 @@ void RenderForwardClustered::_meshlet_culling_init() {
 	{
 		Vector<String> modes;
 		modes.push_back("\n");
-		meshlet_culling.cull_shader.initialize(modes);
+		String defines;
+#ifdef REAL_T_IS_DOUBLE
+		defines += "\n#define USE_DOUBLE_PRECISION \n";
+#endif
+		// The instance buffer is a persistent MultiUmaBuffer and must be bound as a dynamic storage buffer.
+		Vector<uint64_t> dynamic_buffers;
+		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(MESHLET_CULL_INSTANCE_UNIFORM_SET, 0));
+		meshlet_culling.cull_shader.initialize(modes, defines, Vector<RD::PipelineImmutableSampler>(), dynamic_buffers);
 		meshlet_culling.cull_shader_version = meshlet_culling.cull_shader.version_create();
 		RID cull_shader_rid = meshlet_culling.cull_shader.version_get_shader(meshlet_culling.cull_shader_version, 0);
 		for (int i = 0; i < MeshletCulling::CULL_MODE_MAX; i++) {
@@ -5554,7 +5561,8 @@ uint32_t RenderForwardClustered::_meshlet_count_draws(const RenderList &p_render
 	return count;
 }
 
-void RenderForwardClustered::_meshlet_culling_run(RD::ComputeListID p_compute_list, const RenderList &p_render_list, uint32_t p_draw_id_base) {
+void RenderForwardClustered::_meshlet_culling_run(RD::ComputeListID p_compute_list, RenderListType p_render_list_type, uint32_t p_draw_id_base) {
+	const RenderList &p_render_list = render_list[p_render_list_type];
 	if (p_render_list.elements.is_empty()) {
 		return;
 	}
@@ -5562,6 +5570,10 @@ void RenderForwardClustered::_meshlet_culling_run(RD::ComputeListID p_compute_li
 	RD *rd = RD::get_singleton();
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
 	RID cull_shader_rid = meshlet_culling.cull_shader.version_get_shader(meshlet_culling.cull_shader_version, 0);
+
+	RID instance_buffer = scene_state.instance_buffer[p_render_list_type]._get(0u);
+	ERR_FAIL_COND(instance_buffer.is_null());
+	RID prev_instance_uniform_set;
 
 	uint32_t draw_id = p_draw_id_base;
 	for (uint32_t i = 0; i < p_render_list.elements.size();) {
@@ -5587,12 +5599,51 @@ void RenderForwardClustered::_meshlet_culling_run(RD::ComputeListID p_compute_li
 				instance_count /= surf->owner->trail_steps;
 			}
 
-			uint32_t push[3];
-			push[0] = draw_id;
-			push[1] = meshlet_count;
-			push[2] = instance_count;
-			rd->compute_list_set_push_constant(p_compute_list, push, sizeof(push));
+			MeshletCulling::PushConstant push = meshlet_culling.base_push_constant;
+			push.draw_id = draw_id;
+			push.meshlet_count = meshlet_count;
+			push.instance_count = instance_count;
+			push.instance_base = i;
+			push.multimesh_offset = 0;
 
+			const uint32_t base_flags = surf->owner->base_flags;
+			RID transforms_buffer = scene_shader.default_vec4_xform_buffer;
+			if (base_flags & INSTANCE_DATA_FLAG_PARTICLES) {
+				// disable culling for particles, iirc they have different buffer layout
+				push.flags |= MeshletCulling::CULL_FLAG_LOD_DISABLED;
+			} else if (base_flags & INSTANCE_DATA_FLAG_MULTIMESH) {
+				RID multimesh_buffer = mesh_storage->_multimesh_get_buffer_rd_rid(surf->owner->data->base);
+				if (multimesh_buffer.is_valid()) {
+					transforms_buffer = multimesh_buffer;
+					push.flags |= MeshletCulling::CULL_FLAG_MULTIMESH;
+					if (base_flags & INSTANCE_DATA_FLAG_MULTIMESH_FORMAT_2D) {
+						push.flags |= MeshletCulling::CULL_FLAG_MULTIMESH_FORMAT_2D;
+					}
+					if (base_flags & INSTANCE_DATA_FLAG_MULTIMESH_HAS_COLOR) {
+						push.flags |= MeshletCulling::CULL_FLAG_MULTIMESH_HAS_COLOR;
+					}
+					if (base_flags & INSTANCE_DATA_FLAG_MULTIMESH_HAS_CUSTOM_DATA) {
+						push.flags |= MeshletCulling::CULL_FLAG_MULTIMESH_HAS_CUSTOM_DATA;
+					}
+
+					uint32_t prev_offset = 0;
+					mesh_storage->_multimesh_get_motion_vectors_offsets(surf->owner->data->base, push.multimesh_offset, prev_offset);
+				} else {
+					push.flags |= MeshletCulling::CULL_FLAG_LOD_DISABLED;
+				}
+			}
+
+			RID instance_uniform_set = UniformSetCacheRD::get_singleton()->get_cache(cull_shader_rid, MESHLET_CULL_INSTANCE_UNIFORM_SET,
+					RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER_DYNAMIC, 0, instance_buffer),
+					RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 1, transforms_buffer));
+			if (instance_uniform_set != prev_instance_uniform_set) {
+				rd->compute_list_bind_uniform_set(p_compute_list, instance_uniform_set, MESHLET_CULL_INSTANCE_UNIFORM_SET);
+				prev_instance_uniform_set = instance_uniform_set;
+			}
+
+			rd->compute_list_set_push_constant(p_compute_list, &push, sizeof(push));
+
+			// Actually Dispatch the compute shader
 			uint32_t gx = (meshlet_count + 63u) / 64u;
 			uint32_t gy = MIN(instance_count, 65535u);
 			uint32_t gz = (instance_count + 65535u - 1u) / 65535u;
@@ -5605,7 +5656,7 @@ void RenderForwardClustered::_meshlet_culling_run(RD::ComputeListID p_compute_li
 	}
 }
 
-void RenderForwardClustered::_meshlet_compute() {
+void RenderForwardClustered::_meshlet_compute(const RenderDataRD *p_render_data, const Size2i &p_screen_size) {
 	if (!meshlet_culling.enabled) {
 		return;
 	}
@@ -5635,6 +5686,29 @@ void RenderForwardClustered::_meshlet_compute() {
 
 	const uint32_t counters_size_bytes = num_draws * sizeof(uint32_t);
 
+	{
+		const RenderSceneDataRD *scene_data = p_render_data->scene_data;
+		MeshletCulling::PushConstant &pc = meshlet_culling.base_push_constant;
+		pc = {};
+
+		RendererRD::MaterialStorage::store_transform_transposed_3x4(scene_data->cam_transform.affine_inverse(), pc.camera_view_matrix);
+
+		const float lod_threshold = scene_data->screen_mesh_lod_threshold;
+		const float proj_y_scale = Math::abs(scene_data->cam_projection.columns[1][1]);
+		if (lod_threshold > 0.0f && p_screen_size.x > 0 && p_screen_size.y > 0 && proj_y_scale > 0.0f) {
+			pc.lod_scale = proj_y_scale * 0.5f * float(p_screen_size.y) / (lod_threshold * float(p_screen_size.x));
+		} else {
+			pc.flags |= MeshletCulling::CULL_FLAG_LOD_DISABLED;
+		}
+
+		if (scene_data->cam_orthogonal) {
+			pc.flags |= MeshletCulling::CULL_FLAG_ORTHOGONAL;
+			pc.z_near = 0.0f;
+		} else {
+			pc.z_near = MAX(scene_data->cam_projection.get_z_near(), 0.00001f);
+		}
+	}
+
 	rd->draw_command_begin_label("Meshlet Compute");
 
 	rd->draw_command_begin_label("Meshlet Compute Setup");
@@ -5648,8 +5722,8 @@ void RenderForwardClustered::_meshlet_compute() {
 	rd->draw_command_begin_label("Meshlet Compute Cull (Count)");
 	rd->compute_list_bind_compute_pipeline(cl, meshlet_culling.cull_pipelines[MeshletCulling::CULL_MODE_COUNT]);
 	rd->compute_list_bind_uniform_set(cl, fb.cull_uniform_set, 0);
-	_meshlet_culling_run(cl, rl_static, 0);
-	_meshlet_culling_run(cl, rl_motion, static_draws);
+	_meshlet_culling_run(cl, RENDER_LIST_MESHLET, 0);
+	_meshlet_culling_run(cl, RENDER_LIST_MESHLET_MOTION, static_draws);
 	rd->draw_command_end_label();
 
 	rd->compute_list_add_barrier(cl);
@@ -5671,8 +5745,8 @@ void RenderForwardClustered::_meshlet_compute() {
 	rd->draw_command_begin_label("Meshlet Compute Cull (Write)");
 	rd->compute_list_bind_compute_pipeline(cl, meshlet_culling.cull_pipelines[MeshletCulling::CULL_MODE_WRITE]);
 	rd->compute_list_bind_uniform_set(cl, fb.cull_uniform_set, 0);
-	_meshlet_culling_run(cl, rl_static, 0);
-	_meshlet_culling_run(cl, rl_motion, static_draws);
+	_meshlet_culling_run(cl, RENDER_LIST_MESHLET, 0);
+	_meshlet_culling_run(cl, RENDER_LIST_MESHLET_MOTION, static_draws);
 	rd->draw_command_end_label();
 
 	rd->compute_list_end();

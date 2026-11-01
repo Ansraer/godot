@@ -67,6 +67,7 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 		RENDER_PASS_UNIFORM_SET = 1,
 		TRANSFORMS_UNIFORM_SET = 2,
 		MATERIAL_UNIFORM_SET = 3,
+		MESHLET_CULL_INSTANCE_UNIFORM_SET = 1,
 		MESHLET_SURFACE_UNIFORM_SET = 4,
 		MESHLET_FRAME_UNIFORM_SET = 5,
 	};
@@ -223,6 +224,32 @@ private:
 
 		enum { RING_SIZE = 3 };
 
+		// must match meshlet_cull.glsl
+		enum CullFlags {
+			CULL_FLAG_MULTIMESH = (1 << 0),
+			CULL_FLAG_MULTIMESH_FORMAT_2D = (1 << 1),
+			CULL_FLAG_MULTIMESH_HAS_COLOR = (1 << 2),
+			CULL_FLAG_MULTIMESH_HAS_CUSTOM_DATA = (1 << 3),
+			CULL_FLAG_LOD_DISABLED = (1 << 4),
+			CULL_FLAG_ORTHOGONAL = (1 << 5),
+		};
+
+		struct PushConstant {
+			float camera_view_matrix[12];
+			float lod_scale;
+			float z_near;
+			uint32_t flags;
+			uint32_t multimesh_offset;
+
+			uint32_t draw_id;
+			uint32_t meshlet_count;
+			uint32_t instance_count;
+			uint32_t instance_base;
+		};
+
+		// Data shared by all culling dispatches of a frame
+		PushConstant base_push_constant = {};
+
 		MeshletCullShaderRD cull_shader;
 		RID cull_shader_version;
 		RID cull_pipelines[CULL_MODE_MAX];
@@ -258,8 +285,8 @@ private:
 	void _meshlet_culling_init();
 	void _meshlet_culling_free();
 	uint32_t _meshlet_count_draws(const RenderList &p_rl);
-	void _meshlet_culling_run(RD::ComputeListID p_cl, const RenderList &p_rl, uint32_t p_draw_id_base);
-	void _meshlet_compute();
+	void _meshlet_culling_run(RD::ComputeListID p_cl, RenderListType p_rl, uint32_t p_draw_id_base);
+	void _meshlet_compute(const RenderDataRD *p_render_data, const Size2i &p_screen_size);
 
 	enum PassMode {
 		PASS_MODE_COLOR,
