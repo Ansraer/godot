@@ -440,7 +440,7 @@ public:
 	virtual void mesh_add_meshlet_surface(RID p_mesh, int p_surface, const RenderingServerTypes::MeshletSurfaceData &p_data) override;
 	virtual void mesh_meshlet_surface_remove(RID p_mesh, int p_surface) override;
 	virtual RenderingServerTypes::MeshletSurfaceData mesh_get_meshlet_surface(RID p_mesh, int p_surface) const override;
-	RID mesh_get_meshlet_surface_uniform_set(RID p_mesh, int p_surface, RID p_shader, bool p_compute);
+	RID mesh_surface_get_meshlet_uniform_set(void *p_surface, RID p_shader, bool p_compute);
 
 	virtual void mesh_debug_usage(List<RenderingServerTypes::MeshInfo> *r_info) override;
 

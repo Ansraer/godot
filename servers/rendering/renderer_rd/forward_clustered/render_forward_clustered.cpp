@@ -589,8 +589,11 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 			}
 
 			if (meshlet_mode) {
-				RID mesh_rid = surf->owner->data->base;
-				RID surf_uset = mesh_storage->mesh_get_meshlet_surface_uniform_set(mesh_rid, surf->surface_index, scene_shader.default_meshlet_shader_rd, false);
+				// The culling code always uses surf->surface so we can't use mesh_surface here, since that would switch to the shadow mesh for the depth prepass
+				// Since we want to reuse the culling output for both the prepass and the opaque pass there isn't really a good solution here
+
+				// In the future we will switch to the shadow mesh in both the culling logic ONLY when rendering shadows.
+				RID surf_uset = mesh_storage->mesh_surface_get_meshlet_uniform_set(surf->surface, scene_shader.default_meshlet_shader_rd, false);
 				if (surf_uset.is_valid()) {
 					RD::get_singleton()->draw_list_bind_uniform_set(draw_list, surf_uset, MESHLET_SURFACE_UNIFORM_SET);
 				}
@@ -5568,8 +5571,9 @@ void RenderForwardClustered::_meshlet_culling_run(RD::ComputeListID p_compute_li
 			break;
 		}
 
-		RID mesh_rid = surf->owner->data->base;
-		RID uset = mesh_storage->mesh_get_meshlet_surface_uniform_set(mesh_rid, surf->surface_index, cull_shader_rid, true);
+		// TODO: When we add shadow meslets we will need to switch both this and the drawing logic
+		// to the shadow mesh surface
+		RID uset = mesh_storage->mesh_surface_get_meshlet_uniform_set(surf->surface, cull_shader_rid, true);
 
 		if (uset.is_valid()) {
 			rd->compute_list_bind_uniform_set(p_compute_list, uset, MESHLET_SURFACE_UNIFORM_SET);

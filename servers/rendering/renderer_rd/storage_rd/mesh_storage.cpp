@@ -1047,12 +1047,9 @@ void MeshStorage::mesh_meshlet_surface_remove(RID p_mesh, int p_surface) {
 	}
 }
 
-RID MeshStorage::mesh_get_meshlet_surface_uniform_set(RID p_mesh, int p_surface, RID p_shader, bool p_compute) {
-	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
-	ERR_FAIL_NULL_V(mesh, RID());
-	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_surface, mesh->surface_count, RID());
-
-	Mesh::Surface &s = *mesh->surfaces[p_surface];
+RID MeshStorage::mesh_surface_get_meshlet_uniform_set(void *p_surface, RID p_shader, bool p_compute) {
+	ERR_FAIL_NULL_V(p_surface, RID());
+	Mesh::Surface &s = *reinterpret_cast<Mesh::Surface *>(p_surface);
 	if (s.meshlet_count == 0 || p_shader.is_null()) {
 		return RID();
 	}
