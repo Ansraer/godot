@@ -803,13 +803,12 @@ void main() {
 		Meshlet m = meshlets.data[mi.meshlet_id];
 
 		uint tri_local = uint(gl_VertexIndex) / 3u;
-		uint v_slot = uint(gl_VertexIndex) % 3u;
 		// early abort if we are rendering more triangles than there are in the meshlet
 		if (tri_local >= m.triangle_count) {
 			gl_Position = vec4(0.0);
 			return;
 		}
-		uint tri_byte_index = (m.triangle_offset + tri_local) * 3u + v_slot;
+		uint tri_byte_index = m.triangle_offset + uint(gl_VertexIndex);
 		uint local_vidx = meshlet_triangle_local_index(tri_byte_index);
 
 		// store state in global vars so we can reference it during vertex pulling and in macros
