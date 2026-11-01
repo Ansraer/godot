@@ -5580,15 +5580,22 @@ void RenderForwardClustered::_meshlet_culling_run(RD::ComputeListID p_compute_li
 
 			uint32_t meshlet_count = mesh_storage->mesh_surface_get_meshlet_count(surf->surface);
 
+			// Multimeshes set repeat = 1 and instead use owner->instance_count
+			// identical to how instance_count is calculated in _render_list_template
+			uint32_t instance_count = surf->owner->instance_count > 1 ? surf->owner->instance_count : repeat;
+			if (surf->flags & GeometryInstanceSurfaceDataCache::FLAG_USES_PARTICLE_TRAILS) {
+				instance_count /= surf->owner->trail_steps;
+			}
+
 			uint32_t push[3];
 			push[0] = draw_id;
 			push[1] = meshlet_count;
-			push[2] = repeat;
+			push[2] = instance_count;
 			rd->compute_list_set_push_constant(p_compute_list, push, sizeof(push));
 
 			uint32_t gx = (meshlet_count + 63u) / 64u;
-			uint32_t gy = MIN(repeat, 65535u);
-			uint32_t gz = (repeat + 65535u - 1u) / 65535u;
+			uint32_t gy = MIN(instance_count, 65535u);
+			uint32_t gz = (instance_count + 65535u - 1u) / 65535u;
 			rd->compute_list_dispatch(p_compute_list, gx, gy, gz);
 		}
 		//FIXME: uhm, what do we do if uset is not valid? Shouldn't happen, but still..
