@@ -769,6 +769,9 @@ void main() {
 	uint instance_index = draw_call.instance_index;
 	if (!sc_multimesh()) {
 		instance_index += INSTANCE_INDEX;
+		if (sc_occlusion_indirection()) {
+			instance_index = occlusion_instance_index_indirection.data[instance_index];
+		}
 	}
 
 	instance_index_interp = instance_index;

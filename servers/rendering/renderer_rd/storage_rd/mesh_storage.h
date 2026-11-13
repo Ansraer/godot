@@ -503,6 +503,11 @@ public:
 		}
 	}
 
+	_FORCE_INLINE_ uint32_t mesh_surface_get_lod_index_count(void *p_surface, uint32_t p_lod) const {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		return p_lod == 0 ? s->index_count : s->lods[p_lod - 1].index_count;
+	}
+
 	_FORCE_INLINE_ RID mesh_surface_get_index_array(void *p_surface, uint32_t p_lod) const {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 

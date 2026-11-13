@@ -772,6 +772,7 @@ void RendererSceneCull::instance_set_base(RID p_instance, RID p_base) {
 				geom->geometry_instance->set_use_lightmap(RID(), instance->lightmap_uv_scale, instance->lightmap_slice_index);
 				geom->geometry_instance->set_instance_shader_uniforms_offset(instance->instance_uniforms.location());
 				geom->geometry_instance->set_cast_double_sided_shadows(instance->cast_shadows == RSE::SHADOW_CASTING_SETTING_DOUBLE_SIDED);
+				geom->geometry_instance->set_ignore_occlusion_culling(instance->ignore_occlusion_culling);
 				if (instance->lightmap_sh.size() == 9) {
 					geom->geometry_instance->set_lightmap_capture(instance->lightmap_sh.ptr());
 				}
@@ -1342,6 +1343,12 @@ void RendererSceneCull::instance_geometry_set_flag(RID p_instance, RSE::Instance
 				} else {
 					idata.flags &= ~InstanceData::FLAG_IGNORE_OCCLUSION_CULLING;
 				}
+			}
+
+			if ((1 << instance->base_type) & RSE::INSTANCE_GEOMETRY_MASK && instance->base_data) {
+				InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(instance->base_data);
+				ERR_FAIL_NULL(geom->geometry_instance);
+				geom->geometry_instance->set_ignore_occlusion_culling(p_enabled);
 			}
 		} break;
 		default: {

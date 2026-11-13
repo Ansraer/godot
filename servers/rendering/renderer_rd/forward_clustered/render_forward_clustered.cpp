@@ -146,6 +146,23 @@ void RenderForwardClustered::RenderBufferDataForwardClustered::free_data() {
 	if (!render_sdfgi_uniform_set.is_null() && RD::get_singleton()->uniform_set_is_valid(render_sdfgi_uniform_set)) {
 		RD::get_singleton()->free_rid(render_sdfgi_uniform_set);
 	}
+
+	if (occlusion_data) {
+		memdelete(occlusion_data);
+		occlusion_data = nullptr;
+	}
+}
+
+RenderForwardClustered::RenderBufferDataForwardClustered::OcclusionData::~OcclusionData() {
+	if (visible_commands_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(visible_commands_buffer);
+		RD::get_singleton()->free_rid(visible_indirection_buffer);
+		RD::get_singleton()->free_rid(late_commands_buffer);
+		RD::get_singleton()->free_rid(late_indirection_buffer);
+	}
+	if (drawn_in_first_pass_bits.is_valid()) {
+		RD::get_singleton()->free_rid(drawn_in_first_pass_bits);
+	}
 }
 
 void RenderForwardClustered::RenderBufferDataForwardClustered::configure(RenderSceneBuffersRD *p_render_buffers) {
@@ -360,7 +377,14 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 			continue;
 		}
 
-		push_constant.base_index = i + p_params->element_offset;
+		const bool use_occlusion_indirect = p_params->occlusion_commands.is_valid() && element_info.occlusion_cullable;
+		if (p_params->occlusion_commands.is_valid() && !use_occlusion_indirect && !p_params->occlusion_draw_uncullable) {
+			// we are using occlusion culling, but the current object doesn't support it and we are currently not drawing objects that don't support occlusion culling
+			// relevant for the second draw step of the depth prepass. All uncullable objects have already been drawn by the first pass.
+			continue;
+		}
+
+		push_constant.base_index = use_occlusion_indirect ? i : i + p_params->element_offset;
 
 		RID material_uniform_set;
 		void *mesh_surface;
@@ -432,6 +456,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		pipeline_specialization.multimesh_has_color = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_HAS_COLOR);
 		pipeline_specialization.multimesh_has_custom_data = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_HAS_CUSTOM_DATA);
 		pipeline_specialization.material_feedback = p_params->use_material_feedback && surf->material->material_feedback_rid.is_valid();
+		pipeline_specialization.occlusion_indirection = use_occlusion_indirect;
 
 		if constexpr (p_pass_mode == PASS_MODE_COLOR) {
 			pipeline_specialization.use_light_soft_shadows = element_info.uses_softshadow;
@@ -612,7 +637,9 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 
 			bool indirect = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_INDIRECT);
 
-			if (emulate_point_size) {
+			if (use_occlusion_indirect) {
+				RD::get_singleton()->draw_list_draw_indirect(draw_list, true, p_params->occlusion_commands, i * DRAW_INDEXED_INDIRECT_COMMAND_SIZE, 1, DRAW_INDEXED_INDIRECT_COMMAND_SIZE);
+			} else if (emulate_point_size) {
 				if (indirect) {
 					WARN_PRINT("Indirect draws are not supported when emulating point size.");
 				}
@@ -1224,6 +1251,251 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 
 	if (p_render_list == RENDER_LIST_OPAQUE && lightmap_captures_used) {
 		RD::get_singleton()->buffer_update(scene_state.lightmap_capture_buffer, 0, sizeof(LightmapCaptureData) * lightmap_captures_used, scene_state.lightmap_captures);
+	}
+}
+
+bool RenderForwardClustered::_occlusion_surface_is_cullable(const GeometryInstanceSurfaceDataCache *p_surface) const {
+	const GeometryInstanceForwardClustered *inst = p_surface->owner;
+	if (inst->ignore_occlusion_culling || (inst->base_flags & (INSTANCE_DATA_FLAG_MULTIMESH | INSTANCE_DATA_FLAG_PARTICLES))) {
+		return false;
+	}
+	if (p_surface->flags & GeometryInstanceSurfaceDataCache::FLAG_USES_PARTICLE_TRAILS) {
+		return false;
+	}
+	if (p_surface->shader->uses_point_size || p_surface->shader_shadow->uses_point_size) {
+		return false;
+	}
+
+	if ((p_surface->flags & GeometryInstanceSurfaceDataCache::FLAG_USES_STENCIL) || p_surface->shader->writes_depth || p_surface->shader_shadow->writes_depth) {
+		return false;
+	}
+
+	// We use draw indirect indexed!
+	const RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+	return mesh_storage->mesh_surface_get_index_array(p_surface->surface, 0).is_valid() && mesh_storage->mesh_surface_get_index_array(p_surface->surface_shadow, 0).is_valid();
+}
+
+// FIXME: this is currently hard coded to work for the opaque render list
+// We might want to add support for motion, alpha and shadows in the future
+// EDIT: though motion will be a LOT less used once we reconstruct motion for static objects for TAA
+
+// This uploads one array for every render list, which is not ideal. If the same object is in multiple
+// passes we will have duplicated data. (right now we only use RENDER_LIST_OPAQUE but still)
+// We probably need some kind of indirection. e.g. one cull data buffer (with AABBs) and one instance
+// buffer (which points to the cull data) and maybe one more that just lists all the instances that are
+// in a given pass?
+// Probably best to talk with the rendering team about this. If we move to bindless we will probably
+// have most of that data already on the gpu anyways...
+
+void RenderForwardClustered::_occlusion_prepare(const RenderDataRD *p_render_data, Ref<RenderSceneBuffersRD> p_render_buffers, Ref<RenderBufferDataForwardClustered> p_rb_data, PassMode p_depth_pass_mode, OcclusionFrameData &r_frame) {
+	RenderingDevice *rd = RD::get_singleton();
+	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+	RenderList *rl = &render_list[RENDER_LIST_OPAQUE];
+
+	if (!p_rb_data->occlusion_data) {
+		p_rb_data->occlusion_data = memnew(RenderBufferDataForwardClustered::OcclusionData);
+	}
+	RenderBufferDataForwardClustered::OcclusionData &data = *p_rb_data->occlusion_data;
+
+	const uint32_t min_element_buffer_size = 4096;
+
+	uint32_t element_total = rl->elements.size();
+	r_frame.command_count = element_total;
+
+	if (data.command_capacity < element_total) {
+		if (data.visible_commands_buffer.is_valid()) {
+			rd->free_rid(data.visible_commands_buffer);
+			rd->free_rid(data.visible_indirection_buffer);
+			rd->free_rid(data.late_commands_buffer);
+			rd->free_rid(data.late_indirection_buffer);
+		}
+		data.command_capacity = Math::nearest_power_of_2_templated(MAX(min_element_buffer_size, element_total));
+		uint32_t commands_size = data.command_capacity * DRAW_INDEXED_INDIRECT_COMMAND_SIZE;
+		uint32_t indirection_size = data.command_capacity * sizeof(uint32_t);
+		data.visible_commands_buffer = rd->storage_buffer_create(commands_size, Vector<uint8_t>(), RD::STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT);
+		data.visible_indirection_buffer = rd->storage_buffer_create(indirection_size);
+		data.late_commands_buffer = rd->storage_buffer_create(commands_size, Vector<uint8_t>(), RD::STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT);
+		data.late_indirection_buffer = rd->storage_buffer_create(indirection_size);
+	}
+
+	// Reused by all viewports
+	uint32_t element_buffer_size = element_total * sizeof(OcclusionCullElement);
+	if (occlusion.element_buffer.get_size(0u) < element_buffer_size) {
+		occlusion.element_buffer.uninit();
+		occlusion.element_buffer.set_storage_size(0u, Math::nearest_power_of_2_templated(MAX(min_element_buffer_size, element_total)) * sizeof(OcclusionCullElement));
+	}
+
+	// use bitmask to remember which elements have already survived the first culling pass
+	uint32_t drawn_in_first_pass_words = (element_total + 31u) / 32u;
+	if (data.drawn_in_first_pass_words < drawn_in_first_pass_words) {
+		if (data.drawn_in_first_pass_bits.is_valid()) {
+			rd->free_rid(data.drawn_in_first_pass_bits);
+		}
+		data.drawn_in_first_pass_words = MAX(drawn_in_first_pass_words * 2u, 1024u);
+		data.drawn_in_first_pass_bits = rd->storage_buffer_create(data.drawn_in_first_pass_words * sizeof(uint32_t));
+	}
+
+	rd->buffer_clear(data.visible_commands_buffer, 0, element_total * DRAW_INDEXED_INDIRECT_COMMAND_SIZE);
+	rd->buffer_clear(data.late_commands_buffer, 0, element_total * DRAW_INDEXED_INDIRECT_COMMAND_SIZE);
+	rd->buffer_clear(data.drawn_in_first_pass_bits, 0, data.drawn_in_first_pass_words * sizeof(uint32_t));
+
+	occlusion.element_buffer.prepare_for_map(false);
+	OcclusionCullElement *elements = reinterpret_cast<OcclusionCullElement *>(occlusion.element_buffer.map_raw_for_upload(0u));
+
+	// Bounds are relative to the camera
+	Vector3 camera_origin = p_render_data->scene_data->cam_transform.origin;
+
+	uint32_t element_count = 0;
+	for (uint32_t i = 0; i < element_total;) {
+		GeometryInstanceSurfaceDataCache *surface = rl->elements[i];
+		uint32_t repeat = rl->element_info[i].repeat;
+
+		// skip stuff we can't cull
+		bool cullable = _occlusion_surface_is_cullable(surface);
+		if (!cullable) {
+			for (uint32_t j = i; j < i + repeat; j++) {
+				rl->element_info[j].occlusion_cullable = false;
+			}
+			i += repeat;
+			continue;
+		}
+
+		uint32_t lod_index = rl->element_info[i].lod_index;
+		uint32_t index_count_depth = mesh_storage->mesh_surface_get_lod_index_count(p_depth_pass_mode == PASS_MODE_DEPTH ? surface->surface_shadow : surface->surface, lod_index);
+		uint32_t index_count_color = mesh_storage->mesh_surface_get_lod_index_count(surface->surface, lod_index);
+
+		for (uint32_t j = i; j < i + repeat; j++) {
+			rl->element_info[j].occlusion_cullable = true;
+
+			GeometryInstanceForwardClustered *inst = rl->elements[j]->owner;
+			Vector3 center = inst->transformed_aabb.get_center() - camera_origin;
+			Vector3 extent = inst->transformed_aabb.size * 0.5;
+
+			OcclusionCullElement element;
+			element.aabb_center[0] = center.x;
+			element.aabb_center[1] = center.y;
+			element.aabb_center[2] = center.z;
+			element.aabb_extent[0] = extent.x;
+			element.aabb_extent[1] = extent.y;
+			element.aabb_extent[2] = extent.z;
+			element.element_index = j;
+			element.batch_first = i;
+			element.index_count_depth = index_count_depth;
+			element.index_count_color = index_count_color;
+
+			elements[element_count++] = element;
+		}
+
+		i += repeat;
+	}
+
+	rd->buffer_flush(occlusion.element_buffer._get(0u));
+
+	r_frame.element_count = element_count;
+	r_frame.element_buffer = occlusion.element_buffer._get(0u);
+
+	Projection projection = p_render_data->scene_data->get_cam_projection();
+	Transform3D view = p_render_data->scene_data->cam_transform;
+	view.origin = Vector3();
+	RendererRD::MaterialStorage::store_camera(projection * Projection(view.affine_inverse()), r_frame.view_projection);
+
+	// last frame's camera, relative to this frame's camera!!
+	r_frame.has_history = data.has_history;
+	if (data.has_history) {
+		Transform3D last_view = data.last_camera_transform;
+		last_view.origin -= camera_origin;
+		RendererRD::MaterialStorage::store_camera(data.last_projection * Projection(last_view.affine_inverse()), r_frame.last_view_projection);
+	}
+	data.last_projection = projection;
+	data.last_camera_transform = p_render_data->scene_data->cam_transform;
+	data.has_history = true;
+
+	// The base level is rounded down to a power of two so that every mip halves exactly
+	Size2i depth_size = p_render_buffers->get_internal_size();
+	r_frame.hzb_size.width = Math::nearest_power_of_2_templated(uint32_t(depth_size.width) + 1u) / 2u;
+	r_frame.hzb_size.height = Math::nearest_power_of_2_templated(uint32_t(depth_size.height) + 1u) / 2u;
+	r_frame.hzb_mip_count = Math::get_shift_from_power_of_2(uint32_t(MAX(r_frame.hzb_size.width, r_frame.hzb_size.height))) + 1u;
+
+	if (!p_render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_OCCLUSION_HZ)) {
+		p_render_buffers->create_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_OCCLUSION_HZ, RD::DATA_FORMAT_R32_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1, r_frame.hzb_size, 1, r_frame.hzb_mip_count);
+	}
+}
+
+void RenderForwardClustered::_occlusion_cull(Ref<RenderSceneBuffersRD> p_render_buffers, Ref<RenderBufferDataForwardClustered> p_rb_data, const OcclusionFrameData &p_frame, bool p_late) {
+	if (p_frame.element_count == 0 || (!p_late && !p_frame.has_history)) {
+		return;
+	}
+
+	RenderBufferDataForwardClustered::OcclusionData &data = *p_rb_data->occlusion_data;
+	RenderingDevice *rd = RD::get_singleton();
+
+	if (p_late) {
+		// We recycle the command buffer from the first pass for the full opaque material pass
+		rd->buffer_clear(data.visible_commands_buffer, 0, p_frame.command_count * DRAW_INDEXED_INDIRECT_COMMAND_SIZE);
+	}
+
+	OcclusionCullMode mode = p_late ? OCCLUSION_CULL_MODE_LATE : OCCLUSION_CULL_MODE_EARLY;
+	RID shader = occlusion.cull_shader.version_get_shader(occlusion.cull_shader_version, mode);
+	RID sampler = RendererRD::MaterialStorage::get_singleton()->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST_WITH_MIPMAPS, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+
+	LocalVector<RD::Uniform> uniforms;
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER_DYNAMIC, 0, p_frame.element_buffer));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 1, data.visible_commands_buffer));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 2, data.visible_indirection_buffer));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 3, data.drawn_in_first_pass_bits));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>{ sampler, p_render_buffers->get_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_OCCLUSION_HZ) }));
+	if (p_late) {
+		uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 5, data.late_commands_buffer));
+		uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 6, data.late_indirection_buffer));
+	}
+
+	RID uniform_set = UniformSetCacheRD::get_singleton()->get_cache_vec(shader, 0, uniforms);
+
+	OcclusionCullPushConstant push_constant;
+	memcpy(push_constant.view_projection, p_late ? p_frame.view_projection : p_frame.last_view_projection, sizeof(push_constant.view_projection));
+	push_constant.element_count = p_frame.element_count;
+	push_constant.hzb_mip_count = p_frame.hzb_mip_count;
+	push_constant.hzb_size[0] = p_frame.hzb_size.width;
+	push_constant.hzb_size[1] = p_frame.hzb_size.height;
+
+	RD::ComputeListID compute_list = rd->compute_list_begin();
+	rd->compute_list_bind_compute_pipeline(compute_list, occlusion.cull_pipelines[mode]);
+	rd->compute_list_bind_uniform_set(compute_list, uniform_set, 0);
+	rd->compute_list_set_push_constant(compute_list, &push_constant, sizeof(push_constant));
+	// FIXME: this will probably be a problem on AMD cards. thread counts are limited to 65536 iirc
+	rd->compute_list_dispatch_threads(compute_list, p_frame.element_count, 1, 1);
+	rd->compute_list_end();
+}
+
+void RenderForwardClustered::_occlusion_build_hzb(Ref<RenderSceneBuffersRD> p_render_buffers, const OcclusionFrameData &p_frame) {
+	RenderingDevice *rd = RD::get_singleton();
+	RID shader = occlusion.hzb_shader.version_get_shader(occlusion.hzb_shader_version, 0);
+	RID sampler = RendererRD::MaterialStorage::get_singleton()->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+
+	// TODO: this is all temp code. Replace this with a single pass downsampler
+	Size2i source_size = p_render_buffers->get_internal_size();
+	for (uint32_t mip = 0; mip < p_frame.hzb_mip_count; mip++) {
+		const Size2i dest_size(MAX(p_frame.hzb_size.width >> mip, 1), MAX(p_frame.hzb_size.height >> mip, 1));
+		RID source = mip == 0 ? p_render_buffers->get_depth_texture(0) : p_render_buffers->get_texture_slice(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_OCCLUSION_HZ, 0, mip - 1);
+		RID dest = p_render_buffers->get_texture_slice(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_OCCLUSION_HZ, 0, mip);
+
+		RD::Uniform u_source(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>{ sampler, source });
+		RD::Uniform u_dest(RD::UNIFORM_TYPE_IMAGE, 1, dest);
+
+		OcclusionHzbPushConstant push_constant;
+		push_constant.dest_size[0] = dest_size.width;
+		push_constant.dest_size[1] = dest_size.height;
+		push_constant.source_scale[0] = float(source_size.width) / float(dest_size.width);
+		push_constant.source_scale[1] = float(source_size.height) / float(dest_size.height);
+
+		RD::ComputeListID compute_list = rd->compute_list_begin();
+		rd->compute_list_bind_compute_pipeline(compute_list, occlusion.hzb_pipeline);
+		rd->compute_list_bind_uniform_set(compute_list, UniformSetCacheRD::get_singleton()->get_cache(shader, 0, u_source, u_dest), 0);
+		rd->compute_list_set_push_constant(compute_list, &push_constant, sizeof(push_constant));
+		rd->compute_list_dispatch_threads(compute_list, dest_size.width, dest_size.height, 1);
+		rd->compute_list_end();
+
+		source_size = dest_size;
 	}
 }
 
@@ -2184,6 +2456,10 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	RSE::ViewportMSAA msaa = rb->get_msaa_3d();
 	bool use_msaa = msaa != RSE::VIEWPORT_MSAA_DISABLED;
+	// FIXME: add support for MSAA, we will need to resolve the buffer a few more times
+	// FIXME: don't hardcode this to use the opaque render list, we want to add support for motion objects as well
+	//			Also, why did I add the is_empty check anyways? I think it was to stop a crash, but can't remember right now.
+	bool use_occlusion_culling = !is_reflection_probe && !use_msaa && !is_multiview && !render_list[RENDER_LIST_OPAQUE].elements.is_empty() && GLOBAL_GET_CACHED(bool, "rendering/occlusion_culling/use_gpu_occlusion_culling");
 
 	bool ce_pre_opaque_resolved_color = use_msaa && _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_ACCESS_RESOLVED_COLOR, RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_OPAQUE);
 	bool ce_post_opaque_resolved_color = use_msaa && _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_ACCESS_RESOLVED_COLOR, RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_OPAQUE);
@@ -2195,13 +2471,23 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	bool debug_voxelgis = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_ALBEDO || get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_LIGHTING || get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_EMISSION;
 	bool debug_sdfgi_probes = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_SDFGI_PROBES;
-	bool force_depth_pre_pass = scene_state.used_opaque_stencil || using_ssao || using_ssr || using_sscs || using_ssil;
+	bool force_depth_pre_pass = use_occlusion_culling || scene_state.used_opaque_stencil || using_ssao || using_ssr || using_sscs || using_ssil;
 	bool depth_pre_pass = (force_depth_pre_pass || scene_shader.depth_prepass_enabled) && depth_framebuffer.is_valid();
 
 	SceneShaderForwardClustered::ShaderSpecialization base_specialization = scene_shader.default_specialization;
 	base_specialization.use_depth_fog = p_render_data->environment.is_valid() && environment_get_fog_mode(p_render_data->environment) == RSE::EnvironmentFogMode::ENV_FOG_MODE_DEPTH;
 
+	OcclusionFrameData occlusion_frame;
+
 	if (depth_pre_pass) { //depth pre pass
+		if (use_occlusion_culling) {
+			RENDER_TIMESTAMP("Occlusion Culling (Early)");
+			RD::get_singleton()->draw_command_begin_label("Occlusion Culling (Early)");
+			_occlusion_prepare(p_render_data, rb, rb_data, depth_pass_mode, occlusion_frame);
+			_occlusion_cull(rb, rb_data, occlusion_frame, false);
+			RD::get_singleton()->draw_command_end_label();
+		}
+
 		bool needs_pre_resolve = _needs_post_prepass_render(p_render_data, using_sdfgi || using_voxelgi);
 		if (needs_pre_resolve) {
 			RENDER_TIMESTAMP("GI + Render Depth Pre-Pass (Parallel)");
@@ -2218,13 +2504,41 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 		RD::get_singleton()->draw_command_begin_label("Render Depth Pre-Pass");
 
-		RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, nullptr, is_multiview, RID(), samplers, depth_prepass_uniform_buffer_index);
+		RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, nullptr, is_multiview, RID(), samplers, depth_prepass_uniform_buffer_index, false, use_occlusion_culling ? rb_data->occlusion_data->visible_indirection_buffer : RID());
 
 		bool finish_depth = using_ssao || using_ssil || using_sdfgi || using_voxelgi || ce_pre_opaque_resolved_depth || ce_post_opaque_resolved_depth;
 		RenderListParameters render_list_params(render_list[RENDER_LIST_OPAQUE].elements.ptr(), render_list[RENDER_LIST_OPAQUE].element_info.ptr(), render_list[RENDER_LIST_OPAQUE].elements.size(), reverse_cull, depth_pass_mode, 0, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization, !is_reflection_probe);
+		if (use_occlusion_culling) {
+			render_list_params.occlusion_commands = rb_data->occlusion_data->visible_commands_buffer;
+		}
 		_render_list_with_draw_list(&render_list_params, depth_framebuffer, RD::DrawFlags(needs_pre_resolve ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_ALL), depth_pass_clear, 0.0f, 0u, p_render_data->render_region);
 
 		RD::get_singleton()->draw_command_end_label();
+
+		if (use_occlusion_culling) {
+			RENDER_TIMESTAMP("Build Depth Pyramid 1");
+			RD::get_singleton()->draw_command_begin_label("Build Depth Pyramid 1");
+			_occlusion_build_hzb(rb, occlusion_frame);
+			RD::get_singleton()->draw_command_end_label();
+
+			RENDER_TIMESTAMP("Occlusion Culling (Late)");
+			RD::get_singleton()->draw_command_begin_label("Occlusion Culling (Late)");
+			_occlusion_cull(rb, rb_data, occlusion_frame, true);
+			RD::get_singleton()->draw_command_end_label();
+
+			RENDER_TIMESTAMP("Render Depth Pre-Pass (Disoccluded)");
+			RD::get_singleton()->draw_command_begin_label("Render Depth Pre-Pass (Disoccluded)");
+			render_list_params.render_pass_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, nullptr, is_multiview, RID(), samplers, depth_prepass_uniform_buffer_index, false, rb_data->occlusion_data->late_indirection_buffer);
+			render_list_params.occlusion_commands = rb_data->occlusion_data->late_commands_buffer;
+			render_list_params.occlusion_draw_uncullable = false; // already done by first pass
+			_render_list_with_draw_list(&render_list_params, depth_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, p_render_data->render_region);
+			RD::get_singleton()->draw_command_end_label();
+
+			RENDER_TIMESTAMP("Build Depth Pyramid 2");
+			RD::get_singleton()->draw_command_begin_label("Build Depth Pyramid 2");
+			_occlusion_build_hzb(rb, occlusion_frame);
+			RD::get_singleton()->draw_command_end_label();
+		}
 
 		if (use_msaa) {
 			RENDER_TIMESTAMP("Resolve Depth Pre-Pass (MSAA)");
@@ -2290,7 +2604,13 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	uint32_t opaque_pass_uniform_buffer_index = _setup_environment(p_render_data, is_reflection_probe, screen_size, screen_size, p_default_bg_color, true, using_motion_pass);
 
-	RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, p_render_data, is_multiview, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true);
+	RID rp_uniform_set;
+	if (use_occlusion_culling) {
+		rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, p_render_data, is_multiview, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true, rb_data->occlusion_data->visible_indirection_buffer);
+
+	} else {
+		rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, p_render_data, is_multiview, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true, RID());
+	}
 
 	{
 		bool render_motion_pass = !render_list[RENDER_LIST_MOTION].elements.is_empty();
@@ -2313,6 +2633,9 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			uint32_t opaque_color_pass_flags = using_motion_pass ? (color_pass_flags & ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS)) : color_pass_flags;
 			RID opaque_framebuffer = using_motion_pass ? rb_data->get_color_pass_fb(opaque_color_pass_flags) : color_framebuffer;
 			RenderListParameters render_list_params(render_list[RENDER_LIST_OPAQUE].elements.ptr(), render_list[RENDER_LIST_OPAQUE].element_info.ptr(), render_list[RENDER_LIST_OPAQUE].elements.size(), reverse_cull, PASS_MODE_COLOR, opaque_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization, !is_reflection_probe);
+			if (use_occlusion_culling) {
+				render_list_params.occlusion_commands = rb_data->occlusion_data->visible_commands_buffer;
+			}
 			_render_list_with_draw_list(&render_list_params, opaque_framebuffer, RD::DrawFlags(load_color ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_COLOR_ALL) | (depth_pre_pass ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_DEPTH), c, 0.0f, 0u, p_render_data->render_region);
 		}
 
@@ -3481,7 +3804,7 @@ void RenderForwardClustered::_update_render_base_uniform_set() {
 	}
 }
 
-RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, bool p_is_multiview, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas) {
+RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, bool p_is_multiview, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas, RID p_occlusion_indirection_buffer) {
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 
@@ -3892,6 +4215,13 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		uniforms.push_back(u);
 	}
 #endif // MODULE_TEXTURE_STREAMING_ENABLED
+	{
+		RD::Uniform u;
+		u.binding = 39;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(p_occlusion_indirection_buffer.is_valid() ? p_occlusion_indirection_buffer : occlusion.default_indirection_buffer);
+		uniforms.push_back(u);
+	}
 
 	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.get_default_shader_rd(is_multiview), RENDER_PASS_UNIFORM_SET, uniforms);
 }
@@ -4104,6 +4434,13 @@ RID RenderForwardClustered::_setup_sdfgi_render_pass_uniform_set(RID p_albedo_te
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		RID instance_buffer = scene_shader.default_material_feedback_buffer;
 		u.append_id(instance_buffer);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.binding = 39;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(occlusion.default_indirection_buffer);
 		uniforms.push_back(u);
 	}
 
@@ -5312,6 +5649,29 @@ RenderForwardClustered::RenderForwardClustered() {
 		shadow_sampler = RD::get_singleton()->sampler_create(sampler);
 	}
 
+	/* occlusion culling */
+	{
+		Vector<String> variants;
+		variants.push_back("\n"); // OCCLUSION_CULL_MODE_EARLY
+		variants.push_back("\n#define LATE_PASS\n"); // OCCLUSION_CULL_MODE_LATE
+
+		Vector<uint64_t> dynamic_buffers;
+		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(0, 0));
+		occlusion.cull_shader.initialize(variants, "", Vector<RD::PipelineImmutableSampler>(), dynamic_buffers);
+		occlusion.cull_shader_version = occlusion.cull_shader.version_create();
+		for (int i = 0; i < OCCLUSION_CULL_MODE_MAX; i++) {
+			occlusion.cull_pipelines[i] = RD::get_singleton()->compute_pipeline_create(occlusion.cull_shader.version_get_shader(occlusion.cull_shader_version, i));
+		}
+
+		Vector<String> hzb_variants;
+		hzb_variants.push_back("\n");
+		occlusion.hzb_shader.initialize(hzb_variants);
+		occlusion.hzb_shader_version = occlusion.hzb_shader.version_create();
+		occlusion.hzb_pipeline = RD::get_singleton()->compute_pipeline_create(occlusion.hzb_shader.version_get_shader(occlusion.hzb_shader_version, 0));
+
+		occlusion.default_indirection_buffer = RD::get_singleton()->storage_buffer_create(sizeof(uint32_t));
+	}
+
 	{
 		Vector<String> modes;
 		modes.push_back("\n");
@@ -5427,6 +5787,15 @@ RenderForwardClustered::~RenderForwardClustered() {
 
 	RD::get_singleton()->free_rid(shadow_sampler);
 	RSG::light_storage->directional_shadow_atlas_set_size(0);
+
+	for (int i = 0; i < OCCLUSION_CULL_MODE_MAX; i++) {
+		RD::get_singleton()->free_rid(occlusion.cull_pipelines[i]);
+	}
+	occlusion.cull_shader.version_free(occlusion.cull_shader_version);
+	RD::get_singleton()->free_rid(occlusion.hzb_pipeline);
+	occlusion.hzb_shader.version_free(occlusion.hzb_shader_version);
+	occlusion.element_buffer.uninit();
+	RD::get_singleton()->free_rid(occlusion.default_indirection_buffer);
 
 	RD::get_singleton()->free_rid(best_fit_normal.pipeline);
 	RD::get_singleton()->free_rid(best_fit_normal.texture);

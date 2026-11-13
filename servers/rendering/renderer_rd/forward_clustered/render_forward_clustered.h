@@ -41,12 +41,15 @@
 #include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
 #include "servers/rendering/renderer_rd/shaders/forward_clustered/best_fit_normal.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/forward_clustered/integrate_dfg.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/forward_clustered/occlusion_cull.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/forward_clustered/occlusion_hzb.glsl.gen.h"
 
 #ifdef METAL_ENABLED
 #include "servers/rendering/renderer_rd/effects/metal_fx.h"
 #endif
 
 #define RB_SCOPE_FORWARD_CLUSTERED SNAME("forward_clustered")
+#define RB_TEX_OCCLUSION_HZ SNAME("occlusion_hzb")
 
 #define RB_TEX_SPECULAR SNAME("specular")
 #define RB_TEX_SPECULAR_MSAA SNAME("specular_msaa")
@@ -72,7 +75,8 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 		MAX_VOXEL_GI_INSTANCESS = 8,
 		MAX_LIGHTMAPS = 8,
 		MAX_VOXEL_GI_INSTANCESS_PER_INSTANCE = 2,
-		INSTANCE_DATA_BUFFER_MIN_SIZE = 4096
+		INSTANCE_DATA_BUFFER_MIN_SIZE = 4096,
+		DRAW_INDEXED_INDIRECT_COMMAND_SIZE = 20,
 	};
 
 	enum RenderListType {
@@ -123,6 +127,28 @@ public:
 		};
 
 		RID render_sdfgi_uniform_set;
+
+		// Per viewport state of the two pass occlusion culling, created on first use
+		struct OcclusionData {
+			RID visible_commands_buffer;
+			RID visible_indirection_buffer;
+			// Used to draw only stuff the second pass added
+			RID late_commands_buffer;
+			RID late_indirection_buffer;
+
+			uint32_t command_capacity = 0;
+
+			RID drawn_in_first_pass_bits;
+			uint32_t drawn_in_first_pass_words = 0;
+
+			// The camera the depth pyramid was rendered with
+			Projection last_projection;
+			Transform3D last_camera_transform;
+			bool has_history = false;
+
+			~OcclusionData();
+		};
+		OcclusionData *occlusion_data = nullptr;
 
 		void ensure_specular();
 		bool has_specular() const { return render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_SPECULAR); }
@@ -177,7 +203,7 @@ private:
 
 	void _update_render_base_uniform_set();
 	RID _setup_sdfgi_render_pass_uniform_set(RID p_albedo_texture, RID p_emission_texture, RID p_emission_aniso_texture, RID p_geom_facing_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index);
-	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, bool p_is_multiview, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
+	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, bool p_is_multiview, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false, RID p_occlusion_indirection_buffer = RID());
 
 	struct BestFitNormal {
 		BestFitNormalShaderRD shader;
@@ -239,6 +265,8 @@ private:
 		bool use_directional_soft_shadow = false;
 		SceneShaderForwardClustered::ShaderSpecialization base_specialization = {};
 		bool use_material_feedback = false;
+		RID occlusion_commands;
+		bool occlusion_draw_uncullable = true;
 
 		RenderListParameters(GeometryInstanceSurfaceDataCache **p_elements, RenderElementInfo *p_element_info, int p_element_count, bool p_reverse_cull, PassMode p_pass_mode, uint32_t p_color_pass_flags, bool p_no_gi, bool p_use_directional_soft_shadows, RID p_render_pass_uniform_set, bool p_force_wireframe = false, const Vector2 &p_uv_offset = Vector2(), float p_lod_distance_multiplier = 0.0, float p_screen_mesh_lod_threshold = 0.0, uint32_t p_view_count = 1, uint32_t p_element_offset = 0, SceneShaderForwardClustered::ShaderSpecialization p_base_specialization = {}, bool p_use_material_feedback = false) {
 			elements = p_elements;
@@ -477,6 +505,7 @@ private:
 
 				// This value is not part of the sort key as there are no more available bits.
 				uint32_t uses_lightmap_specular : 1;
+				uint32_t occlusion_cullable : 1;
 			};
 			uint32_t value;
 		};
@@ -756,6 +785,66 @@ private:
 	};
 
 	RenderList render_list[RENDER_LIST_MAX];
+
+	/* Occlusion Culling */
+
+	enum OcclusionCullMode {
+		OCCLUSION_CULL_MODE_EARLY,
+		OCCLUSION_CULL_MODE_LATE,
+		OCCLUSION_CULL_MODE_MAX,
+	};
+
+	// Must match the structures in occlusion_cull.glsl.
+	struct OcclusionCullElement {
+		float aabb_center[3];
+		uint32_t element_index;
+		float aabb_extent[3];
+		uint32_t batch_first;
+		uint32_t index_count_depth;
+		uint32_t index_count_color;
+		uint32_t pad[2];
+	};
+
+	struct OcclusionCullPushConstant {
+		float view_projection[16];
+		uint32_t element_count;
+		uint32_t hzb_mip_count;
+		float hzb_size[2];
+	};
+
+	struct OcclusionHzbPushConstant {
+		int32_t dest_size[2];
+		float source_scale[2];
+	};
+
+	struct OcclusionCulling {
+		OcclusionCullShaderRD cull_shader;
+		RID cull_shader_version;
+		RID cull_pipelines[OCCLUSION_CULL_MODE_MAX];
+
+		OcclusionHzbShaderRD hzb_shader;
+		RID hzb_shader_version;
+		RID hzb_pipeline;
+
+		MultiUmaBuffer<1u> element_buffer = MultiUmaBuffer<1u>("OCCLUSION_ELEMENTS");
+		RID default_indirection_buffer; // Bound by every pass that doesn't use occlusion culling.
+	} occlusion;
+
+	struct OcclusionFrameData {
+		uint32_t element_count = 0;
+		uint32_t command_count = 0; // One per element of the render list, culled or not
+		float view_projection[16] = {};
+		float last_view_projection[16] = {};
+		bool has_history = false;
+		RID element_buffer;
+		Size2i hzb_size;
+		uint32_t hzb_mip_count = 0;
+	};
+
+	bool _occlusion_surface_is_cullable(const GeometryInstanceSurfaceDataCache *p_surface) const;
+	void _occlusion_prepare(const RenderDataRD *p_render_data, Ref<RenderSceneBuffersRD> p_render_buffers, Ref<RenderBufferDataForwardClustered> p_rb_data, PassMode p_depth_pass_mode, OcclusionFrameData &r_frame);
+	void _occlusion_cull(Ref<RenderSceneBuffersRD> p_render_buffers, Ref<RenderBufferDataForwardClustered> p_rb_data, const OcclusionFrameData &p_frame, bool p_late);
+	void _occlusion_build_hzb(Ref<RenderSceneBuffersRD> p_render_buffers, const OcclusionFrameData &p_frame);
 
 	virtual void _update_shader_quality_settings() override;
 

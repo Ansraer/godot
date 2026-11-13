@@ -61,6 +61,7 @@ public:
 	virtual void set_lightmap_capture(const Color *p_sh9) = 0;
 	virtual void set_instance_shader_uniforms_offset(int32_t p_offset) = 0;
 	virtual void set_cast_double_sided_shadows(bool p_enable) = 0;
+	virtual void set_ignore_occlusion_culling(bool p_ignore) = 0;
 
 	virtual void reset_motion_vectors() = 0;
 
@@ -91,6 +92,7 @@ public:
 	Transform3D transform;
 	bool mirror = false;
 	AABB transformed_aabb;
+	bool ignore_occlusion_culling = false;
 	bool non_uniform_scale = false;
 	float lod_model_scale = 1.0;
 	float lod_bias = 0.0;
@@ -148,6 +150,7 @@ public:
 	virtual void set_use_dynamic_gi(bool p_enable) override;
 	virtual void set_instance_shader_uniforms_offset(int32_t p_offset) override;
 	virtual void set_cast_double_sided_shadows(bool p_enable) override;
+	virtual void set_ignore_occlusion_culling(bool p_ignore) override { ignore_occlusion_culling = p_ignore; }
 
 	virtual void reset_motion_vectors() override;
 

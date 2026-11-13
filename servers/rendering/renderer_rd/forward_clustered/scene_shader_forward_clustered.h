@@ -130,6 +130,7 @@ public:
 				uint32_t cluster_has_area_light : 1;
 				uint32_t use_lightmap_specular : 1;
 				uint32_t material_feedback : 1;
+				uint32_t occlusion_indirection : 1;
 			};
 		};
 
@@ -271,6 +272,7 @@ public:
 		bool uses_world_coordinates = false;
 		bool uses_screen_texture_mipmaps = false;
 		bool uses_z_clip_scale = false;
+		bool writes_depth = false;
 		RSE::CullMode cull_mode = RSE::CULL_MODE_DISABLED;
 
 		bool stencil_enabled = false;

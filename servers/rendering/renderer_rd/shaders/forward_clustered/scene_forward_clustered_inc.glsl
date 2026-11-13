@@ -154,6 +154,10 @@ bool sc_material_feedback() {
 	return ((sc_packed_1() >> 7) & 1U) != 0;
 }
 
+bool sc_occlusion_indirection() {
+	return ((sc_packed_1() >> 8) & 1U) != 0;
+}
+
 float sc_luminance_multiplier() {
 	// Not used in clustered renderer but we share some code with the mobile renderer that requires this.
 	return 1.0;
@@ -380,6 +384,11 @@ layout(set = 1, binding = 2, std430) buffer restrict readonly InstanceDataBuffer
 	InstanceData data[];
 }
 instances;
+
+layout(set = 1, binding = 39, std430) buffer restrict readonly OcclusionInstanceIndexIndirectionBuffer {
+	uint data[];
+}
+occlusion_instance_index_indirection;
 
 #ifdef USE_RADIANCE_OCTMAP_ARRAY
 

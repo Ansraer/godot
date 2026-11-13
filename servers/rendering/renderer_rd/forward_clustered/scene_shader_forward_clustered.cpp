@@ -83,6 +83,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	uses_world_coordinates = false;
 	uses_particle_trails = false;
 	uses_z_clip_scale = false;
+	writes_depth = false;
 
 	int depth_drawi = DEPTH_DRAW_OPAQUE;
 
@@ -154,6 +155,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.write_flag_pointers["TANGENT"] = &writes_tangent;
 	actions.write_flag_pointers["BINORMAL"] = &writes_tangent;
 	actions.write_flag_pointers["Z_CLIP_SCALE"] = &uses_z_clip_scale;
+	actions.write_flag_pointers["DEPTH"] = &writes_depth;
 
 	actions.stencil_mode_values["read"] = Pair<int *, int>(&stencil_readi, STENCIL_FLAG_READ);
 	actions.stencil_mode_values["write"] = Pair<int *, int>(&stencil_writei, STENCIL_FLAG_WRITE);
